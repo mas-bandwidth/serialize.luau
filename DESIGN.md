@@ -308,7 +308,8 @@ paragraph:
 **The writer is STRICT.** It writes exactly serialize.go v1.15.1's bytes for
 the same values. It latches `ValueOutOfRange` or `Overflow` exactly where
 serialize.go's WriteStream returns `ErrValueOutOfRange` or `ErrOverflow`, and
-raises, naming the rule, exactly where serialize.go panics on API misuse (a).
+raises, naming the rule, exactly where serialize.go panics on API misuse (a),
+and on a non-finite compressed float value, STANDARD.md's ruling (e).
 It writes nothing on a refusal: every bounds check is of the whole operation's
 width before any bit moves (a refused wide write leaves no dangling low
 dword). Where serialize.go decodes a Go string, the Luau writer decodes the
