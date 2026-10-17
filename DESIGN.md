@@ -133,7 +133,9 @@ Deviations from serialize.js's spelling, each with its reason:
 
 API misuse raises, naming the rule, with serialize.go's panic text
 (`serialize: bits must be in [1,32]`, `serialize: min must not be greater than
-max`, ...), on every stream in every state, even after an error has latched,
+max`, ...), and a non-finite compressed float value on write (`serialize:
+compressed float value must be finite`, STANDARD.md compressed_float, see
+(e)), on every stream in every state, even after an error has latched,
 because Go's panic check comes before its error check. A holder value or a
 parameter that serialize.go's parameter TYPE could not hold (a non-integer, a
 number outside the Go type's domain, a value of the wrong Luau type) is the
@@ -248,10 +250,22 @@ float32 ruling, 2026-10-17):
   parameters are.
 - compressed_float's arithmetic is float32, emulated by `fround` after every
   float32 operation, in serialize.go's order. Write: `n = fround(fround(v -
-  min) / delta)`, clamped with the `not (n >= 0)` / `not (n <= 1)` form (NaN
-  to 0), then `math.floor(fround(n * fround(maxIntegerValue)) + 0.5)` (that
-  `+ 0.5` and the floor are float64 in Go, so no fround), then the integer
-  clamp to `maxIntegerValue`. Read: `fround(fround(fround(i) /
+  min) / delta)`, clamped with the `not (n >= 0)` / `not (n <= 1)` form, then
+  `math.floor(fround(fround(n * fround(maxIntegerValue)) + 0.5))`, then the
+  integer clamp to `maxIntegerValue`. The `+ 0.5` is a float32 add: serialize.go
+  v1.15.1 write_stream.go:386 is `uint32(math.Floor(float64(float32(n*float32(m))
+  + 0.5)))`, and STANDARD.md, compressed_float, says the product rounds to
+  float32 before 0.5 is added and "that sum rounds to float32 before the floor"
+  (two roundings, so a float64 add is wrong: m = 16777215, n =
+  8388609/16777215 writes 8388610 in Go, 8388609 with a float64 add). A
+  non-finite input value (NaN, +inf, -inf) RAISES on write, `serialize:
+  compressed float value must be finite`, before the latch check and before any
+  arithmetic: STANDARD.md, compressed_float, Non-finite inputs are
+  non-conforming ("should assert out on write too"), the same rule in the Luau,
+  Lua and Squirrel ports. Go clamps a NaN to 0 here; this port does not, the
+  one deliberate deviation from serialize.go's write arm, for STANDARD.md's
+  ruling. The read and measure arms never see the value and are untouched.
+  Read: `fround(fround(fround(i) /
   fround(maxIntegerValue)) * delta)` then `fround(that + min)`. Params:
   `delta = fround(max - min)`, `values = fround(delta / resolution)`, clamped
   to `[1, 4294967040]`, `maxIntegerValue = math.ceil(values)`. Each fround of
