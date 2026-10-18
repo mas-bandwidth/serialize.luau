@@ -327,6 +327,44 @@ function measureInt128(s: any, holder: any, min: any, max: any): boolean
 	return s:_measure(bitsRequired128(min, max))
 end
 
+-- writeUint128 writes holder.value, an Int128/Uint128 pair, as the full 128
+-- bits: the low 64-bit half first, then the high half, each as
+-- serialize_bits(half, 64) (STANDARD.md, uint128; DESIGN.md (h)). There is no
+-- range rule: the only refusal is a full buffer.
+function writeUint128(s: any, holder: any): boolean
+	if not isPair(holder.value) then
+		error(RAISE_INT128, 2)
+	end
+	if s:_latched() then
+		return false
+	end
+	local value = holder.value
+	if s:_available() < 128 then
+		return s:_fail(OVERFLOW)
+	end
+	s:_writeBits64(value.lo, 64)
+	s:_writeBits64(value.hi, 64)
+	return true
+end
+
+-- readUint128 reads the full 128 bits into holder.value, the low half first;
+-- a latched stream and a read past the end refuse (STANDARD.md, uint128).
+function readUint128(s: any, holder: any): boolean
+	if not isPair(holder.value) then
+		error(RAISE_INT128, 2)
+	end
+	if s:_latched() then
+		return false
+	end
+	if s:_available() < 128 then
+		return s:_fail(OVERFLOW)
+	end
+	local lo = s:_readBits64(64)
+	local hi = s:_readBits64(64)
+	holder.value = new(lo, hi)
+	return true
+end
+
 return table.freeze({
 	Int128 = table.freeze(Int128),
 	Uint128 = table.freeze(Uint128),
@@ -334,4 +372,6 @@ return table.freeze({
 	writeInt128 = writeInt128,
 	readInt128 = readInt128,
 	measureInt128 = measureInt128,
+	writeUint128 = writeUint128,
+	readUint128 = readUint128,
 })

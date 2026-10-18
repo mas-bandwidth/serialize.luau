@@ -41,12 +41,12 @@ local function splitHex(s: string): { number }
 	return out
 end
 
-local function countSpaces(s: string): number
-	local n = 0
-	for _ in s:gmatch(" ") do
-		n += 1
+local function parseStep(s: string): { string }
+	local out = {}
+	for w in s:gmatch("%S+") do
+		out[#out + 1] = w
 	end
-	return n
+	return out
 end
 
 local function parseVecFile(text: string): { any }
@@ -146,6 +146,10 @@ local function arraySame(a: { number }, b: { number }): boolean
 end
 
 local function decToInt(s: string): integer
+	local negative = string.sub(s, 1, 1) == "-"
+	if negative then
+		s = string.sub(s, 2)
+	end
 	local hi = 0
 	local lo = 0
 	for i = 1, #s do
@@ -155,7 +159,11 @@ local function decToInt(s: string): integer
 		lo = v % 4294967296
 		hi = hi * 10 + carry
 	end
-	return integer.bor(integer.lshift(integer.create(hi), 32i), integer.create(lo))
+	local result = integer.bor(integer.lshift(integer.create(hi), 32i), integer.create(lo))
+	if negative then
+		result = integer.sub(0i, result)
+	end
+	return result
 end
 
 local Int128 = serialize.Int128
@@ -423,8 +431,8 @@ local function runDouble(r: any, rec: any)
 	check(r:serializeDouble(h), rec.name .. ": double accepted read refused")
 	local hex = rec.expect.value:match("0x(%x+)") :: string
 	local padded = string.rep("0", 16 - #hex) .. hex
-	local wantLo = tonumber(string.sub(padded, 1, 8), 16) :: number
-	local wantHi = tonumber(string.sub(padded, 9, 16), 16) :: number
+	local wantHi = tonumber(string.sub(padded, 1, 8), 16) :: number
+	local wantLo = tonumber(string.sub(padded, 9, 16), 16) :: number
 	local gotLo, gotHi = doubleBits(h.value)
 	check(gotLo == wantLo and gotHi == wantHi, rec.name .. ": double read bits differ")
 	check(r:bitsProcessed() == rec.consumed, rec.name .. ": double consumed")
@@ -581,68 +589,143 @@ local function missingFamily(op: string)
 end
 
 local function runFixed(r: any, rec: any)
-	missingFamily("fixed")
+	local integerBits = tonumber(rec.params.integer_bits) :: number
+	local fractionBits = tonumber(rec.params.fraction_bits) :: number
+	local min = decToInt(rec.params.min)
+	local max = decToInt(rec.params.max)
+	if integerBits + fractionBits <= 64 then
+		local h = { value = 0i }
+		local ok = r:serializeFixed64(h, integerBits, fractionBits, min, max)
+		if rec.expect.refused then
+			check(not ok, rec.name .. ": fixed64 refused read succeeded")
+			check(h.value == 0i, rec.name .. ": fixed64 refusal changed its holder")
+			check(r:error() ~= nil, rec.name .. ": fixed64 refusal latched no error")
+			checkTerminal(r, "bits", {})
+			return
+		end
+		local want = decToInt(rec.expect.value)
+		check(ok, rec.name .. ": fixed64 accepted read refused")
+		check(h.value == want, rec.name .. ": fixed64 value mismatch")
+		check(r:bitsProcessed() == rec.consumed, rec.name .. ": fixed64 consumed")
+		if rec.writer then
+			local w = serialize.WriteStream.new(buffer.create(32))
+			check(w:serializeFixed64({ value = want }, integerBits, fractionBits, min, max), rec.name .. ": fixed64 write refused")
+			w:flush()
+			check(sameBytes(rec.bytes, w:data()), rec.name .. ": fixed64 writer bytes mismatch")
+		end
+	else
+		local h = { value = Int128.new(0i, 0i) }
+		local ok = r:serializeFixed128(h, integerBits, fractionBits, min, max)
+		if rec.expect.refused then
+			check(not ok, rec.name .. ": fixed128 refused read succeeded")
+			check(Int128.cmp(h.value, Int128.new(0i, 0i)) == 0, rec.name .. ": fixed128 refusal changed its holder")
+			check(r:error() ~= nil, rec.name .. ": fixed128 refusal latched no error")
+			checkTerminal(r, "bits", {})
+			return
+		end
+		local want = parse128(rec.expect.value)
+		check(ok, rec.name .. ": fixed128 accepted read refused")
+		check(Int128.cmp(h.value, want) == 0, rec.name .. ": fixed128 value mismatch")
+		check(r:bitsProcessed() == rec.consumed, rec.name .. ": fixed128 consumed")
+		if rec.writer then
+			local w = serialize.WriteStream.new(buffer.create(32))
+			check(w:serializeFixed128({ value = want }, integerBits, fractionBits, min, max), rec.name .. ": fixed128 write refused")
+			w:flush()
+			check(sameBytes(rec.bytes, w:data()), rec.name .. ": fixed128 writer bytes mismatch")
+		end
+	end
 end
 
 local function runCompressedFloat(r: any, rec: any)
-	missingFamily("compressed_float")
+	local min = tonumber(rec.params.min) :: number
+	local max = tonumber(rec.params.max) :: number
+	local res = tonumber(rec.params.res) :: number
+	local h = { value = 0.0 }
+	local ok = r:serializeCompressedFloat(h, min, max, res)
+	if rec.expect.refused then
+		check(not ok, rec.name .. ": compressed_float refused read succeeded")
+		check(h.value == 0.0, rec.name .. ": compressed_float refusal changed its holder")
+		check(r:error() ~= nil, rec.name .. ": compressed_float refusal latched no error")
+		checkTerminal(r, "bits", {})
+		return
+	end
+	check(ok, rec.name .. ": compressed_float accepted read refused")
+	local want = hexToBits32(rec.expect.value)
+	check(serialize._family("float").f32bits(h.value) == want, rec.name .. ": compressed_float read bits differ")
+	check(r:bitsProcessed() == rec.consumed, rec.name .. ": compressed_float consumed")
 end
 
 -- ---------------------------------------------------------------------------
 -- Sequence steps (sequence.txt, object.txt, message.txt; STANDARD.md The
 -- vector format, A sequence vector).
 
-local function parseStep(s: string): { string }
-	local out = {}
-	for w in s:gmatch("%S+") do
-		out[#out + 1] = w
-	end
-	return out
-end
-
 local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 	local op = st[1]
+	local dec = st.decoded
 	if op == "bits" then
 		local n = tonumber(st[2]) :: number
-		local h = { value = 0 }
-		local ok = r:serializeBits(h, n)
+		local base = if dec ~= nil then dec else 0
+		local h = { value = base }
+		local ok
+		if n <= 32 then
+			ok = r:serializeBits(h, n)
+		else
+			ok = r:serializeBits64(h, n)
+		end
 		table.insert(out, { ok = ok, value = h.value })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "bool" then
-		local h = { value = false }
+		local base: boolean = if dec ~= nil then dec else false
+		local h = { value = base }
 		local ok = r:serializeBool(h)
 		table.insert(out, { ok = ok, value = h.value })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "align" then
 		local ok = r:serializeAlign()
 		table.insert(out, { ok = ok, value = nil })
 		return ok
 	elseif op == "float" then
-		local h = { value = 12345.0 }
+		local base = if dec ~= nil then dec else 12345.0
+		local h = { value = base }
 		local ok = r:serializeFloat(h)
 		table.insert(out, { ok = ok, bits = serialize._family("float").f32bits(h.value) })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "double" then
-		local h = { value = 12345.0 }
+		local base = if dec ~= nil then dec else 12345.0
+		local h = { value = base }
 		local ok = r:serializeDouble(h)
 		local lo, hi = doubleBits(h.value)
 		table.insert(out, { ok = ok, dlo = lo, dhi = hi })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "bytes" then
 		local n = tonumber(st[2]) :: number
+		if dec ~= nil then
+			local ok = r:serializeBytes(bytesToBuffer(dec))
+			table.insert(out, { ok = ok, bytes = dec })
+			return ok
+		end
 		local dst = buffer.create(n)
 		local ok = r:serializeBytes(dst)
-		table.insert(out, { ok = ok, bytes = bufToBytes(dst) })
+		local decoded = bufToBytes(dst)
+		table.insert(out, { ok = ok, bytes = decoded })
+		if ok then st.decoded = decoded end
 		return ok
 	elseif op == "string" then
 		local n = tonumber(st[2]) :: number
-		local h = { value = "" }
+		local base = if dec ~= nil then dec else ""
+		local h = { value = base }
 		local ok = r:serializeString(h, n)
 		table.insert(out, { ok = ok, str = h.value })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "wstring" then
 		local n = tonumber(st[2]) :: number
-		local h = { value = "" }
+		local base = if dec ~= nil then dec else ""
+		local h = { value = base }
 		local ok = r:serializeWideString(h, n)
 		local units = {}
 		for u in utf8.codes(h.value) do
@@ -655,43 +738,80 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 			end
 		end
 		table.insert(out, { ok = ok, wunits = units })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "uint128" then
-		local h = { value = Int128.new(0i, 0i) }
+		local base = if dec ~= nil then dec else Int128.new(0i, 0i)
+		local h = { value = base }
 		local ok = r:serializeUint128(h)
 		table.insert(out, { ok = ok, u128 = h.value })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "int" then
 		local mn = tonumber(st[2]) :: number
 		local mx = tonumber(st[3]) :: number
-		local h = { value = mn }
+		local base = if dec ~= nil then dec else mn
+		local h = { value = base }
 		local ok = r:serializeInt(h, mn, mx)
 		table.insert(out, { ok = ok, value = h.value })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "int64" then
 		local mn = decToInt(st[2])
 		local mx = decToInt(st[3])
-		local h = { value = mn }
+		local base = if dec ~= nil then dec else mn
+		local h = { value = base }
 		local ok = r:serializeInt64(h, mn, mx)
 		table.insert(out, { ok = ok, i64 = h.value })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "int128" then
 		local mn = parse128(st[2])
 		local mx = parse128(st[3])
-		local h = { value = mn }
+		local base = if dec ~= nil then dec else mn
+		local h = { value = base }
 		local ok = r:serializeInt128(h, mn, mx)
 		table.insert(out, { ok = ok, i128 = h.value })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "int_relative" then
 		local prev = tonumber(st[2]) :: number
-		local h = { value = -1 }
+		local base = if dec ~= nil then dec else -1
+		local h = { value = base }
 		local ok = r:serializeIntRelative(prev, h)
 		table.insert(out, { ok = ok, value = h.value })
+		if ok then st.decoded = h.value end
 		return ok
 	elseif op == "fixed" then
-		missingFamily("fixed")
+		local ib = tonumber(st[2]) :: number
+		local fb = tonumber(st[3]) :: number
+		local mn = decToInt(st[4])
+		local mx = decToInt(st[5])
+		if ib + fb <= 64 then
+			local base = if dec ~= nil then dec else 0i
+			local h = { value = base }
+			local ok = r:serializeFixed64(h, ib, fb, mn, mx)
+			table.insert(out, { ok = ok, value = h.value })
+			if ok then st.decoded = h.value end
+			return ok
+		else
+			local base = if dec ~= nil then dec else Int128.new(0i, 0i)
+			local h = { value = base }
+			local ok = r:serializeFixed128(h, ib, fb, mn, mx)
+			table.insert(out, { ok = ok, i128 = h.value })
+			if ok then st.decoded = h.value end
+			return ok
+		end
 	elseif op == "compressed_float" then
-		missingFamily("compressed_float")
+		local mn = tonumber(st[2]) :: number
+		local mx = tonumber(st[3]) :: number
+		local res = tonumber(st[4]) :: number
+		local base = if dec ~= nil then dec else 0.0
+		local h = { value = base }
+		local ok = r:serializeCompressedFloat(h, mn, mx, res)
+		table.insert(out, { ok = ok, bits = serialize._family("float").f32bits(h.value) })
+		if ok then st.decoded = h.value end
+		return ok
 	else
 		fail("sequence step has no runner: " .. op)
 	end
@@ -821,21 +941,84 @@ local function testUnknownOperationControl()
 	check(raised, "an operation with no runner must be REJECTED, not skipped")
 end
 
-local FILES = {
-	"align", "bits", "bool", "bytes", "compressed_float", "double", "fixed",
-	"float", "int", "int128", "int64", "int_relative", "message", "object",
-	"sequence", "string", "uint128", "wstring",
-}
+-- testSabotagedReaderControl (STANDARD.md, "A gate nobody has seen go red"):
+-- a reader with a refusal rule switched off — through a test-only hook on the
+-- stream instance, not a source edit — must go red on exactly the vectors that
+-- pin that rule. We disable the int out-of-range check: the refused int vectors
+-- that pin it must now be accepted, and every accepted vector must still accept.
+local function testSabotagedReaderControl()
+	local text = (inputs :: any)["int"]
+	local records = parseVecFile(text)
+	local refused = {}
+	local accepted = {}
+	for _, rec in records do
+		if rec.op == "int" then
+			local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
+			local h = { value = 0 }
+			local ok = r:serializeInt(h, tonumber(rec.params.min), tonumber(rec.params.max))
+			if rec.expect.refused then
+				check(not ok, rec.name .. ": control expects refusal, real reader accepted")
+				table.insert(refused, rec)
+			else
+				check(ok, rec.name .. ": control expects accept, real reader refused")
+				table.insert(accepted, rec)
+			end
+		end
+	end
+	check(#refused > 0, "control found no refused int vector to pin")
+	local function sabotagedReadInt(self: any, holder: any, min: number, max: number): boolean
+		local bits = serialize._family("int").bitsRequired(min, max)
+		if self:_latched() then return false end
+		if self:_available() < bits then
+			return self:_fail(serialize.SerializeError.Overflow)
+		end
+		if bits == 0 then
+			holder.value = min
+			return true
+		end
+		local offset = self:_readBits(bits)
+		holder.value = offset + min
+		return true
+	end
+	local flipped = 0
+	for _, rec in refused do
+		local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
+		r.serializeInt = sabotagedReadInt
+		local h = { value = 0 }
+		if r:serializeInt(h, tonumber(rec.params.min), tonumber(rec.params.max)) then
+			flipped += 1
+		end
+	end
+	check(flipped > 0, "the sabotaged reader found nothing to break: no vector pins the int out-of-range rule")
+	for _, rec in accepted do
+		local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
+		r.serializeInt = sabotagedReadInt
+		local h = { value = 0 }
+		check(r:serializeInt(h, tonumber(rec.params.min), tonumber(rec.params.max)), rec.name .. ": sabotaged reader refused an accepted vector")
+	end
+end
+
+local function sortedInputNames(): { string }
+	local names = {}
+	for k in (inputs :: any) do
+		table.insert(names, k)
+	end
+	table.sort(names)
+	return names
+end
 
 function T.TestConformanceCorpus()
+	local names = sortedInputNames()
+	check(#names > 0, "no conformance files discovered: an empty corpus is a failure, not a pass")
 	local total = 0
-	for _, f in FILES do
+	for _, f in names do
 		local n = runFile(f)
 		print(f .. ".txt: " .. n .. " records")
 		total += n
 	end
 	print("conformance total: " .. total .. " records")
 	testUnknownOperationControl()
+	testSabotagedReaderControl()
 end
 
 return T
