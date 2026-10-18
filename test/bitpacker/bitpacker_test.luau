@@ -85,7 +85,15 @@ local function writeBufferEquals(actual: buffer, bytes)
 end
 
 -- Test 1 + 3: every width 1..32 at every starting bit offset 0..63, against
--- the oracle, then a read round-trip.
+-- the oracle, then a read round-trip. The value written is a distinct pattern
+-- (alternating bits, rotated by the offset) so a value-bit-order or wrong-bit
+-- bug diverges from the oracle instead of agreeing because every bit is 1.
+local function patternedValue(w: number, o: number): number
+	local base = (o % 2 == 0) and 0xAAAAAAAA or 0x55555555
+	local v = bit32.rrotate(base, (o // 2) % 32)
+	return bit32.band(v, (2 ^ w) - 1)
+end
+
 local function testWriterOracleAndRoundTrip()
 	for o = 0, 63 do
 		for w = 1, 32 do
@@ -95,7 +103,7 @@ local function testWriterOracleAndRoundTrip()
 				writes[#writes + 1] = { k % 2, 1 }
 				k += 1
 			end
-			local value = (2 ^ w) - 1
+			local value = patternedValue(w, o)
 			writes[#writes + 1] = { value, w }
 
 			local writer = BitWriter.new(buffer.create(128))
@@ -150,6 +158,10 @@ local function testGoTestBitpacker()
 	writer:writeBits(50000, 16)
 	writer:writeBits(9999999, 32)
 	writer:flushBits()
+	-- the byte-for-byte sequence of serialize.go's TestBitpacker (v1.15.1):
+	-- 0,1,10,255,1000,50000,9999999 written at widths 1,1,8,8,10,16,32
+	local golden = { 0x2A, 0xFC, 0xA3, 0x0F, 0x35, 0xFC, 0x67, 0x89, 0x09, 0x00 }
+	writeBufferEquals(writer:data(), golden)
 	local bitsWritten = 1 + 1 + 8 + 8 + 10 + 16 + 32
 	if writer:bytesWritten() ~= 10 then
 		error("expected 10 bytes written, got " .. writer:bytesWritten(), 2)
@@ -301,6 +313,47 @@ local function testBytesApis()
 	end, "requires byte alignment")
 end
 
+-- The misuse raises the brief names, each with serialize.go's panic text.
+local function testMisuse()
+	raises(function()
+		BitWriter.new(buffer.create(8)):writeBits(1, 0)
+	end, "bits must be in [1,32]")
+	raises(function()
+		BitWriter.new(buffer.create(8)):writeBits(1, 33)
+	end, "bits must be in [1,32]")
+	raises(function()
+		BitReader.new(buffer.create(8)):readBits(0)
+	end, "bits must be in [1,32]")
+	raises(function()
+		BitReader.new(buffer.create(8)):readBits(33)
+	end, "bits must be in [1,32]")
+
+	-- writer overflow: 8 bytes is 64 bits; 32+32 fills it, one more overflows
+	local w = BitWriter.new(buffer.create(8))
+	w:writeBits(0xFFFFFFFF, 32)
+	w:writeBits(0xFFFFFFFF, 32)
+	raises(function()
+		w:writeBits(1, 1)
+	end, "bit writer overflow")
+
+	-- buffer size not a multiple of 8 bytes
+	raises(function()
+		BitWriter.new(buffer.create(12))
+	end, "buffer size must be a multiple of 8 bytes")
+
+	-- readBytes on a stream that is not byte aligned; and a destination buffer
+	-- too small for the count must raise before writing any byte
+	raises(function()
+		local r = BitReader.new(bytesToBuffer({ 0xFF }))
+		r:readBits(1)
+		r:readBytes(buffer.create(1))
+	end, "byte array serialization requires byte alignment")
+	raises(function()
+		local r = BitReader.new(bytesToBuffer({ 1, 2, 3, 4 }))
+		r:readBytes(buffer.create(2), 1, 2)
+	end, "destination buffer too small")
+end
+
 function T.TestBitpacker()
 	testWriterOracleAndRoundTrip()
 	testMasking()
@@ -308,6 +361,7 @@ function T.TestBitpacker()
 	testPastEndAndShortData()
 	testReadAlignRefuse()
 	testBytesApis()
+	testMisuse()
 end
 
 return T
