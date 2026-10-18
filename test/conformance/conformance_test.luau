@@ -672,55 +672,61 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		else
 			ok = r:serializeBits64(h, n)
 		end
-		table.insert(out, { ok = ok, value = h.value })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, value = h.value })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused bits step changed its holder") end
 		return ok
 	elseif op == "bool" then
 		local base: boolean = if dec ~= nil then dec else false
 		local h = { value = base }
 		local ok = r:serializeBool(h)
-		table.insert(out, { ok = ok, value = h.value })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, value = h.value })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused bool step changed its holder") end
 		return ok
 	elseif op == "align" then
 		local ok = r:serializeAlign()
-		table.insert(out, { ok = ok, value = nil })
+		table.insert(out, { op = op, ok = ok, value = nil })
 		return ok
 	elseif op == "float" then
 		local base = if dec ~= nil then dec else 12345.0
 		local h = { value = base }
 		local ok = r:serializeFloat(h)
-		table.insert(out, { ok = ok, bits = serialize._family("float").f32bits(h.value) })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, bits = serialize._family("float").f32bits(h.value) })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused float step changed its holder") end
 		return ok
 	elseif op == "double" then
 		local base = if dec ~= nil then dec else 12345.0
 		local h = { value = base }
 		local ok = r:serializeDouble(h)
 		local lo, hi = doubleBits(h.value)
-		table.insert(out, { ok = ok, dlo = lo, dhi = hi })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, dlo = lo, dhi = hi })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused double step changed its holder") end
 		return ok
 	elseif op == "bytes" then
 		local n = tonumber(st[2]) :: number
 		if dec ~= nil then
 			local ok = r:serializeBytes(bytesToBuffer(dec))
-			table.insert(out, { ok = ok, bytes = dec })
+			table.insert(out, { op = op, ok = ok, bytes = dec })
 			return ok
 		end
 		local dst = buffer.create(n)
 		local ok = r:serializeBytes(dst)
 		local decoded = bufToBytes(dst)
-		table.insert(out, { ok = ok, bytes = decoded })
-		if ok then st.decoded = decoded end
+		table.insert(out, { op = op, ok = ok, bytes = decoded })
+		if ok then
+			st.decoded = decoded
+		else
+			for j = 0, n - 1 do
+				check(buffer.readu8(dst, j) == 0, "a refused bytes step touched its destination")
+			end
+		end
 		return ok
 	elseif op == "string" then
 		local n = tonumber(st[2]) :: number
 		local base = if dec ~= nil then dec else ""
 		local h = { value = base }
 		local ok = r:serializeString(h, n)
-		table.insert(out, { ok = ok, str = h.value })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, str = h.value })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused string step wrote its destination") end
 		return ok
 	elseif op == "wstring" then
 		local n = tonumber(st[2]) :: number
@@ -728,7 +734,7 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local h = { value = base }
 		local ok = r:serializeWideString(h, n)
 		local units = {}
-		for u in utf8.codes(h.value) do
+		for _, u in utf8.codes(h.value) do
 			if u >= 0x10000 then
 				u = u - 0x10000
 				units[#units + 1] = 0xD800 + math.floor(u / 0x400)
@@ -737,15 +743,15 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 				units[#units + 1] = u
 			end
 		end
-		table.insert(out, { ok = ok, wunits = units })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, wunits = units })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused wstring step wrote its destination") end
 		return ok
 	elseif op == "uint128" then
 		local base = if dec ~= nil then dec else Int128.new(0i, 0i)
 		local h = { value = base }
 		local ok = r:serializeUint128(h)
-		table.insert(out, { ok = ok, u128 = h.value })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, u128 = h.value })
+		if ok then st.decoded = h.value else check(Int128.cmp(h.value, base) == 0, "a refused uint128 step changed its holder") end
 		return ok
 	elseif op == "int" then
 		local mn = tonumber(st[2]) :: number
@@ -753,8 +759,8 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local base = if dec ~= nil then dec else mn
 		local h = { value = base }
 		local ok = r:serializeInt(h, mn, mx)
-		table.insert(out, { ok = ok, value = h.value })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, value = h.value })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused int step changed its holder") end
 		return ok
 	elseif op == "int64" then
 		local mn = decToInt(st[2])
@@ -762,8 +768,8 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local base = if dec ~= nil then dec else mn
 		local h = { value = base }
 		local ok = r:serializeInt64(h, mn, mx)
-		table.insert(out, { ok = ok, i64 = h.value })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, i64 = h.value })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused int64 step changed its holder") end
 		return ok
 	elseif op == "int128" then
 		local mn = parse128(st[2])
@@ -771,16 +777,16 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local base = if dec ~= nil then dec else mn
 		local h = { value = base }
 		local ok = r:serializeInt128(h, mn, mx)
-		table.insert(out, { ok = ok, i128 = h.value })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, i128 = h.value })
+		if ok then st.decoded = h.value else check(Int128.cmp(h.value, base) == 0, "a refused int128 step changed its holder") end
 		return ok
 	elseif op == "int_relative" then
 		local prev = tonumber(st[2]) :: number
 		local base = if dec ~= nil then dec else -1
 		local h = { value = base }
 		local ok = r:serializeIntRelative(prev, h)
-		table.insert(out, { ok = ok, value = h.value })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, value = h.value })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused int_relative step changed its holder") end
 		return ok
 	elseif op == "fixed" then
 		local ib = tonumber(st[2]) :: number
@@ -791,15 +797,15 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 			local base = if dec ~= nil then dec else 0i
 			local h = { value = base }
 			local ok = r:serializeFixed64(h, ib, fb, mn, mx)
-			table.insert(out, { ok = ok, value = h.value })
-			if ok then st.decoded = h.value end
+			table.insert(out, { op = op, ok = ok, value = h.value })
+			if ok then st.decoded = h.value else check(h.value == base, "a refused fixed64 step changed its holder") end
 			return ok
 		else
 			local base = if dec ~= nil then dec else Int128.new(0i, 0i)
 			local h = { value = base }
 			local ok = r:serializeFixed128(h, ib, fb, mn, mx)
-			table.insert(out, { ok = ok, i128 = h.value })
-			if ok then st.decoded = h.value end
+			table.insert(out, { op = op, ok = ok, i128 = h.value })
+			if ok then st.decoded = h.value else check(Int128.cmp(h.value, base) == 0, "a refused fixed128 step changed its holder") end
 			return ok
 		end
 	elseif op == "compressed_float" then
@@ -809,8 +815,8 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local base = if dec ~= nil then dec else 0.0
 		local h = { value = base }
 		local ok = r:serializeCompressedFloat(h, mn, mx, res)
-		table.insert(out, { ok = ok, bits = serialize._family("float").f32bits(h.value) })
-		if ok then st.decoded = h.value end
+		table.insert(out, { op = op, ok = ok, bits = serialize._family("float").f32bits(h.value) })
+		if ok then st.decoded = h.value else check(h.value == base, "a refused compressed_float step changed its holder") end
 		return ok
 	else
 		fail("sequence step has no runner: " .. op)
@@ -818,56 +824,142 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 	return false
 end
 
-local function runSteps(r: any, steps: { { string } }, out: { any }): boolean
+-- runSteps walks a sequence's steps in order. poison is true for a refused
+-- (expect refused) record: STANDARD.md, What a runner checks, requires a
+-- refusal to be terminal, so after the first failing step every later step
+-- must also fail, consume no bits, and leave its destination untouched — the
+-- runner must check that by behavior, not by an accessor.
+local function runSteps(r: any, steps: { { string } }, out: { any }, poison: boolean): boolean
 	local i = 1
+	local failed = false
+	local bitsAtFailure = 0
+	local function noteFail()
+		if failed then
+			if poison then
+				check(r:bitsProcessed() == bitsAtFailure,
+					"a step after a refusal consumed bits")
+			end
+		else
+			failed = true
+			bitsAtFailure = r:bitsProcessed()
+		end
+	end
 	while i <= #steps do
 		local st = steps[i]
 		if st[1] == "object" then
 			local n = tonumber(st[2]) :: number
-			table.insert(out, { ok = true, value = nil })
+			table.insert(out, { op = "object", ok = true, value = nil })
 			local inner = {}
-			local ok = true
 			for j = 1, n do
 				local sub = steps[i + j]
 				check(sub ~= nil, "object step outruns the step list")
-				if not parseOneStep(r, sub, inner) then
-					ok = false
+				local beforeFailed = failed
+				local okStep = parseOneStep(r, sub, inner)
+				if not okStep then
+					noteFail()
+				elseif beforeFailed and poison then
+					check(false, "a step after a refusal succeeded")
 				end
 			end
 			i += n
-			if not ok then
-				return false
-			end
 			for _, e in inner do
 				table.insert(out, e)
 			end
 		else
-			if not parseOneStep(r, st, out) then
-				return false
+			local beforeFailed = failed
+			local okStep = parseOneStep(r, st, out)
+			if not okStep then
+				noteFail()
+			elseif beforeFailed and poison then
+				check(false, "a step after a refusal succeeded")
 			end
 		end
 		i += 1
 	end
-	return true
+	return not failed
+end
+
+local function hexToBits64(hex: string): (number, number)
+	local s = hex:match("0x(%x+)") :: string
+	s = string.rep("0", 16 - #s) .. s
+	local hi = tonumber(string.sub(s, 1, 8), 16) :: number
+	local lo = tonumber(string.sub(s, 9, 16), 16) :: number
+	return lo, hi
+end
+
+-- checkSeqValue compares one step's decoded outcome against its `expect value`
+-- entry, in the vector file's own spelling (STANDARD.md, What a runner checks:
+-- the decoded value equals the value the record states).
+local function checkSeqValue(rec: any, entry: any, want: string)
+	if want == "-" then return end
+	local op = entry.op
+	if op == "bits" then
+		if typeof(entry.value) == "integer" then
+			check(decToInt(want) == entry.value, rec.name .. ": sequence bits (64-bit) value mismatch")
+		else
+			check(tonumber(want) == entry.value, rec.name .. ": sequence bits value mismatch")
+		end
+	elseif op == "int" or op == "int_relative" then
+		check(tonumber(want) == entry.value, rec.name .. ": sequence " .. op .. " value mismatch")
+	elseif op == "bool" then
+		check(entry.value == (want == "true"), rec.name .. ": sequence bool mismatch")
+	elseif op == "int64" then
+		check(decToInt(want) == entry.i64, rec.name .. ": sequence int64 value mismatch")
+	elseif op == "int128" then
+		check(Int128.cmp(parse128(want), entry.i128) == 0, rec.name .. ": sequence int128 value mismatch")
+	elseif op == "uint128" then
+		check(Int128.cmp(parse128(want), entry.u128) == 0, rec.name .. ": sequence uint128 value mismatch")
+	elseif op == "float" or op == "compressed_float" then
+		check(hexToBits32(want) == entry.bits, rec.name .. ": sequence " .. op .. " bits mismatch")
+	elseif op == "double" then
+		local wantLo, wantHi = hexToBits64(want)
+		check(entry.dlo == wantLo and entry.dhi == wantHi, rec.name .. ": sequence double bits mismatch")
+	elseif op == "bytes" then
+		check(arraySame(entry.bytes, splitHex(want)), rec.name .. ": sequence bytes mismatch")
+	elseif op == "string" then
+		check(entry.str == buffer.tostring(bytesToBuffer(splitHex(want))), rec.name .. ": sequence string mismatch")
+	elseif op == "wstring" then
+		local wantUnits = {}
+		for u in want:gmatch("%x+") do
+			wantUnits[#wantUnits + 1] = tonumber(u, 16) :: number
+		end
+		check(arraySame(entry.wunits, wantUnits), rec.name .. ": sequence wstring mismatch")
+	elseif op == "fixed" then
+		if entry.i128 ~= nil then
+			check(Int128.cmp(parse128(want), entry.i128) == 0, rec.name .. ": sequence fixed128 value mismatch")
+		else
+			check(decToInt(want) == entry.value, rec.name .. ": sequence fixed64 value mismatch")
+		end
+	elseif op == "align" or op == "object" then
+		check(false, rec.name .. ": unexpected expect value for " .. op)
+	end
 end
 
 local function runSequence(r: any, rec: any)
 	local steps = rec.steps
-	local ok = runSteps(r, steps, {})
+	local out = {}
+	local ok = runSteps(r, steps, out, rec.expect.refused)
 	if rec.expect.refused then
 		check(not ok, rec.name .. ": refused sequence was accepted")
 	else
 		check(ok, rec.name .. ": accepted sequence was refused (" .. tostring(r:error()) .. ")")
+		local entries = string.split(rec.expect.value, " | ")
+		check(#entries == #out, rec.name .. ": expect value lists " .. #entries .. " entries, ran " .. #out .. " steps")
+		for i = 1, #entries do
+			checkSeqValue(rec, out[i], entries[i])
+		end
+		check(r:bitsProcessed() == rec.consumed,
+			rec.name .. ": sequence consumed " .. tostring(r:bitsProcessed()) .. " != " .. tostring(rec.consumed))
 	end
 	if rec.measure ~= nil then
 		local m = serialize.MeasureStream.new()
-		runSteps(m, steps, {})
+		runSteps(m, steps, {}, false)
 		check(m:bitsProcessed() >= rec.measure,
 			rec.name .. ": measure " .. tostring(m:bitsProcessed()) .. " < floor " .. tostring(rec.measure))
 	end
 	if rec.writer then
 		local w = serialize.WriteStream.new(buffer.create(128))
-		check(runSteps(w, steps, {}), rec.name .. ": canonical sequence write was refused")
+		check(runSteps(w, steps, {}, false), rec.name .. ": canonical sequence write was refused")
 		w:flush()
 		check(sameBytes(rec.bytes, w:data()), rec.name .. ": sequence writer bytes mismatch")
 	end
