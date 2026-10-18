@@ -174,6 +174,12 @@ local function writeProgram(prog)
 			ws:serializeInt128({ value = n128(w) }, n128({ w[5], w[6], w[7], w[8] }), n128({ w[9], w[10], w[11], w[12] }))
 		elseif op == "u128" then
 			ws:serializeUint128({ value = n128(w) })
+		elseif op == "fx" then
+			ws:serializeFixed64({ value = bin64(w[1], w[2]) }, w[3], w[4], bin64(w[5], w[6]), bin64(w[7], w[8]))
+		elseif op == "f128" then
+			ws:serializeFixed128({ value = S.Int128.new(bin64(w[1], w[2]), bin64(w[3], w[4])) }, w[5], w[6], bin64(w[7], w[8]), bin64(w[9], w[10]))
+		elseif op == "cf" then
+			ws:serializeCompressedFloat({ value = FLT.f32frombits(w[1]) }, FLT.f32frombits(w[2]), FLT.f32frombits(w[3]), FLT.f32frombits(w[4]))
 		elseif op == "ir" then
 			ws:serializeIntRelative(i32(w[1]), { value = i32(w[2]) })
 		elseif op == "f" then
@@ -261,6 +267,18 @@ local function readProgram(prog, data)
 			local h = { value = S.Int128.new(0i, 0i) }
 			ok = rs:serializeUint128(h)
 			tok = hex128(h.value)
+		elseif op == "fx" then
+			local h = { value = 0i }
+			ok = rs:serializeFixed64(h, w[3], w[4], bin64(w[5], w[6]), bin64(w[7], w[8]))
+			tok = hex64(h.value)
+		elseif op == "f128" then
+			local h = { value = S.Int128.new(0i, 0i) }
+			ok = rs:serializeFixed128(h, w[5], w[6], bin64(w[7], w[8]), bin64(w[9], w[10]))
+			tok = hex128(h.value)
+		elseif op == "cf" then
+			local h = { value = 0 }
+			ok = rs:serializeCompressedFloat(h, FLT.f32frombits(w[2]), FLT.f32frombits(w[3]), FLT.f32frombits(w[4]))
+			tok = "f" .. string.format("%08x", FLT.f32bits(h.value))
 		elseif op == "ir" then
 			local h = { value = 0 }
 			ok = rs:serializeIntRelative(i32(w[1]), h)

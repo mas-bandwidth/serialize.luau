@@ -51,7 +51,7 @@ type program struct {
 // ---------------------------------------------------------------------------
 // canonical trace encoders
 
-func tokD(v int64) string { return "d" + strconv.FormatInt(v, 10) }
+func tokD(v int64) string  { return "d" + strconv.FormatInt(v, 10) }
 func tokU(v uint64) string { return "d" + strconv.FormatUint(v, 10) }
 func tokH64(lo, hi uint32) string {
 	return "h" + strconv.FormatUint(uint64(lo), 10) + ":" + strconv.FormatUint(uint64(hi), 10)
@@ -92,7 +92,7 @@ func hexDecode(s string) []byte {
 // ---------------------------------------------------------------------------
 // word assembly
 
-func s64(lo, hi uint32) uint64 { return uint64(hi)<<32 | uint64(lo) }
+func s64(lo, hi uint32) uint64      { return uint64(hi)<<32 | uint64(lo) }
 func w64(v uint64) (uint32, uint32) { return uint32(v), uint32(v >> 32) }
 
 func i128w(l0, l1, h0, h1 uint32) serialize.Int128 {
@@ -119,7 +119,7 @@ func genProgram(r *rand.Rand) program {
 	var steps []step
 	for k := 0; k < n; k++ {
 		op := pick(r, []string{"b", "b64", "bl", "u8", "u16", "u32", "u64", "i", "i64",
-			"i128", "ir", "f", "d", "by", "s", "ws", "al", "ob"})
+			"i128", "u128", "ir", "f", "d", "fx", "f128", "cf", "by", "s", "ws", "al", "ob"})
 		st := step{op: op}
 		switch op {
 		case "b":
@@ -227,10 +227,40 @@ func genProgram(r *rand.Rand) program {
 		case "u128":
 			w := wI128(serialize.Int128{Lo: r.Uint64(), Hi: r.Uint64()})
 			st.words = append(st.words, w[:]...)
-	case "ir":
-		prev := int32(r.Uint32() & 0x7ffffffe)
-		cur := prev + int32(1+r.Uint64()%uint64(0x7fffffff-int32(prev)))
-		st.words = []uint32{uint32(prev), uint32(cur)}
+		case "fx":
+			f := r.IntN(6)
+			integerBits := 8 + r.IntN(8)
+			min := int64(-64 - r.IntN(32))
+			max := int64(64 + r.IntN(32))
+			rawMin := min << uint(f)
+			rawMax := max << uint(f)
+			raw := rawMin + int64(r.Uint64()%uint64(rawMax-rawMin+1))
+			v0, v1 := w64(uint64(raw))
+			m0, m1 := w64(uint64(min))
+			x0, x1 := w64(uint64(max))
+			st.words = []uint32{v0, v1, uint32(integerBits), uint32(f), m0, m1, x0, x1}
+		case "f128":
+			f := r.IntN(8)
+			integerBits := 128 - f
+			min := int64(-64 - r.IntN(32))
+			max := int64(64 + r.IntN(32))
+			rawMin := min << uint(f)
+			rawMax := max << uint(f)
+			raw := rawMin + int64(r.Uint64()%uint64(rawMax-rawMin+1))
+			wv := wI128(serialize.Int128From64(raw))
+			m0, m1 := w64(uint64(min))
+			x0, x1 := w64(uint64(max))
+			st.words = []uint32{wv[0], wv[1], wv[2], wv[3], uint32(integerBits), uint32(f), m0, m1, x0, x1}
+		case "cf":
+			min := float32(-8)
+			max := float32(8)
+			res := float32(0.25)
+			value := min + float32(r.IntN(65))*res
+			st.words = []uint32{math.Float32bits(value), math.Float32bits(min), math.Float32bits(max), math.Float32bits(res)}
+		case "ir":
+			prev := int32(r.Uint32() & 0x7ffffffe)
+			cur := prev + int32(1+r.Uint64()%uint64(0x7fffffff-int32(prev)))
+			st.words = []uint32{uint32(prev), uint32(cur)}
 		case "f":
 			u := r.Uint32()
 			switch r.IntN(10) {
@@ -331,8 +361,12 @@ func canonicalOf(st step) string {
 			return "t"
 		}
 		return "f"
-	case "i128", "u128":
+	case "i128", "u128", "f128":
 		return tokH128([4]uint32{w[0], w[1], w[2], w[3]})
+	case "fx":
+		return tokH64(w[0], w[1])
+	case "cf":
+		return tokF(w[0])
 	case "f":
 		return tokF(w[0])
 	case "d":
@@ -409,6 +443,15 @@ func goWrite(s *serialize.WriteStream, st step) {
 	case "u128":
 		v := u128w(w[0], w[1], w[2], w[3])
 		s.SerializeUint128(&v)
+	case "fx":
+		v := int64(s64(w[0], w[1]))
+		s.SerializeFixed64(&v, int(w[2]), int(w[3]), int64(s64(w[4], w[5])), int64(s64(w[6], w[7])))
+	case "f128":
+		v := i128w(w[0], w[1], w[2], w[3])
+		s.SerializeFixed128(&v, int(w[4]), int(w[5]), int64(s64(w[6], w[7])), int64(s64(w[8], w[9])))
+	case "cf":
+		v := math.Float32frombits(w[0])
+		s.SerializeCompressedFloat32(&v, math.Float32frombits(w[1]), math.Float32frombits(w[2]), math.Float32frombits(w[3]))
 	case "ir":
 		prev := int32(w[0])
 		cur := int32(w[1])
@@ -436,7 +479,7 @@ func goWrite(s *serialize.WriteStream, st step) {
 }
 
 type fuzzObj struct {
-	b       bool
+	b         bool
 	v, mn, mx int32
 }
 
@@ -551,6 +594,20 @@ func readOne(s *serialize.ReadStream, st step) (string, bool) {
 		err = s.SerializeUint128(&v)
 		wv := wI128(v.Int128())
 		return tokH128(wv), err == nil
+	case "fx":
+		var v int64
+		err = s.SerializeFixed64(&v, int(w[2]), int(w[3]), int64(s64(w[4], w[5])), int64(s64(w[6], w[7])))
+		l0, l1 := w64(uint64(v))
+		return tokH64(l0, l1), err == nil
+	case "f128":
+		v := serialize.Int128{}
+		err = s.SerializeFixed128(&v, int(w[4]), int(w[5]), int64(s64(w[6], w[7])), int64(s64(w[8], w[9])))
+		wv := wI128(v)
+		return tokH128(wv), err == nil
+	case "cf":
+		var v float32
+		err = s.SerializeCompressedFloat32(&v, math.Float32frombits(w[1]), math.Float32frombits(w[2]), math.Float32frombits(w[3]))
+		return tokF(math.Float32bits(v)), err == nil
 	case "ir":
 		var cur int32
 		err = s.SerializeIntRelative(int32(w[0]), &cur)

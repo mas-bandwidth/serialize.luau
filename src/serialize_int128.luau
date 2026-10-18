@@ -327,6 +327,49 @@ function measureInt128(s: any, holder: any, min: any, max: any): boolean
 	return s:_measure(bitsRequired128(min, max))
 end
 
+-- The unsigned 128-bit arms (STANDARD.md, uint128; serialize.go
+-- SerializeUint128): all 128 bits, low half first, no range.
+function writeUint128(s: any, holder: any): boolean
+	if not isPair(holder.value) then
+		error(RAISE_INT128, 2)
+	end
+	if s:_latched() then
+		return false
+	end
+	if s:_available() < 128 then
+		return s:_fail(OVERFLOW)
+	end
+	s:_writeBits64(holder.value.lo, 64)
+	s:_writeBits64(holder.value.hi, 64)
+	return true
+end
+
+function readUint128(s: any, holder: any): boolean
+	if not isPair(holder.value) then
+		error(RAISE_INT128, 2)
+	end
+	if s:_latched() then
+		return false
+	end
+	if s:_available() < 128 then
+		return s:_fail(OVERFLOW)
+	end
+	local lo = s:_readBits64(64)
+	local hi = s:_readBits64(64)
+	holder.value = new(lo, hi)
+	return true
+end
+
+function measureUint128(s: any, holder: any): boolean
+	if not isPair(holder.value) then
+		error(RAISE_INT128, 2)
+	end
+	if s:_latched() then
+		return false
+	end
+	return s:_measure(128)
+end
+
 return table.freeze({
 	Int128 = table.freeze(Int128),
 	Uint128 = table.freeze(Uint128),
@@ -334,4 +377,7 @@ return table.freeze({
 	writeInt128 = writeInt128,
 	readInt128 = readInt128,
 	measureInt128 = measureInt128,
+	writeUint128 = writeUint128,
+	readUint128 = readUint128,
+	measureUint128 = measureUint128,
 })
