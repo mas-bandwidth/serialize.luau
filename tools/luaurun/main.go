@@ -74,7 +74,7 @@ type runSpec struct {
 	tests    []string // the *_test.luau files the driver runs
 	control  string   // the control's name, empty for an ordinary run
 	expected string   // the control's expected list, verbatim
-	patch    *patch
+	patches  []patch
 	extra    map[string][]byte // extra corpus files, by base name
 }
 
@@ -185,18 +185,18 @@ func runUnit(root, luau string, u runSpec, stdout, stderr io.Writer) bool {
 			return false
 		}
 	}
-	if u.patch != nil {
-		target := filepath.Join(unit, u.patch.file)
+	for _, p := range u.patches {
+		target := filepath.Join(unit, p.file)
 		b, err := os.ReadFile(target)
 		if err != nil {
-			fmt.Fprintf(stdout, "FAIL %s: the patched file %s is not in the unit\n", label, u.patch.file)
+			fmt.Fprintf(stdout, "FAIL %s: the patched file %s is not in the unit\n", label, p.file)
 			return false
 		}
-		if n := strings.Count(string(b), u.patch.needle); n != 1 {
-			fmt.Fprintf(stdout, "FAIL %s: the needle occurs %d times in %s, not once: %q\n", label, n, u.patch.file, u.patch.needle)
+		if n := strings.Count(string(b), p.needle); n != 1 {
+			fmt.Fprintf(stdout, "FAIL %s: the needle occurs %d times in %s, not once: %q\n", label, n, p.file, p.needle)
 			return false
 		}
-		b = []byte(strings.Replace(string(b), u.patch.needle, u.patch.replacement, 1))
+		b = []byte(strings.Replace(string(b), p.needle, p.replacement, 1))
 		if err := os.WriteFile(target, b, 0o644); err != nil {
 			fmt.Fprintf(stderr, "luaurun: %v\n", err)
 			return false
@@ -326,7 +326,7 @@ func controlModule(name, expected string) []byte {
 }
 
 // runControls runs every control of tools/controls/controls.tsv: one line per
-// control, four tab-separated fields, name, src file, needle and replacement
+// patch (a control of several lines patches each), four tab-separated fields, name, src file, needle and replacement
 // (\n and \t in a needle or replacement are a newline and a tab, so a needle
 // can span lines; a file of "-" and empty needle and replacement for
 // unknown-operation, which
@@ -345,7 +345,12 @@ func runControls(root string, stdout, stderr io.Writer) int {
 	}
 	testDir := filepath.Join(root, "test", "conformance")
 	tests := []string{filepath.Join(testDir, "conformance_test.luau")}
-	ran, failed := 0, 0
+	// A control is every row carrying its name, in order: a rule this port
+	// keeps in more than one place is deleted from each of them, one needle a
+	// row.
+	var order []string
+	rows := map[string][][]string{}
+	failed := 0
 	for i, line := range strings.Split(string(table), "\n") {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -356,7 +361,14 @@ func runControls(root string, stdout, stderr io.Writer) int {
 			failed++
 			continue
 		}
-		name := fields[0]
+		if _, seen := rows[fields[0]]; !seen {
+			order = append(order, fields[0])
+		}
+		rows[fields[0]] = append(rows[fields[0]], fields)
+	}
+	unescape := strings.NewReplacer(`\n`, "\n", `\t`, "\t")
+	ran := 0
+	for _, name := range order {
 		u := runSpec{label: "control " + name, dir: "control-" + name, testDir: testDir, tests: tests, control: name}
 		if name == "unknown-operation" {
 			text, err := os.ReadFile(filepath.Join(root, "conformance-controls", "unknown-operation.txt"))
@@ -381,8 +393,9 @@ func runControls(root string, stdout, stderr io.Writer) int {
 				continue
 			}
 			u.expected = string(expected)
-			unescape := strings.NewReplacer(`\n`, "\n", `\t`, "\t")
-			u.patch = &patch{file: fields[1], needle: unescape.Replace(fields[2]), replacement: unescape.Replace(fields[3])}
+			for _, f := range rows[name] {
+				u.patches = append(u.patches, patch{file: f[1], needle: unescape.Replace(f[2]), replacement: unescape.Replace(f[3])})
+			}
 		}
 		ran++
 		if !runUnit(root, luau, u, stdout, stderr) {

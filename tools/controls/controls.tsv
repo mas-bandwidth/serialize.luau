@@ -1,15 +1,14 @@
 # tools/controls/controls.tsv -- the negative controls (STANDARD.md, "A gate nobody has seen go red";
-# tools/luaurun -controls). One control per line: name, the src file, the needle (which must occur
-# exactly once in that file) and its replacement, TAB separated. Each deletes ONE refusal rule from a
-# copy of the unit, and the conformance corpus run against it must fail exactly the vectors of
-# conformance-controls/<name>.expected. unknown-operation patches nothing: it adds
+# tools/luaurun -controls). One patch per line: name, the src file, the needle (which must occur
+# exactly once in that file; \n and \t spell a newline and a tab) and its replacement, TAB
+# separated. Each control deletes ONE refusal rule from a copy of the unit, every line of its name
+# applied (a rule this port keeps in several places is deleted from each), and the conformance
+# corpus run against it must fail exactly the vectors of conformance-controls/<name>.expected. unknown-operation patches nothing: it adds
 # conformance-controls/unknown-operation.txt to the corpus, whose one vector must fail.
 #
-# Carried: every control the reference names except ranged-reconstruction and ranged-range, whose
-# .expected lists assume the C++ structure (int_relative's bounded tiers and the string length read
-# through serialize_int); this port reads those tiers and that length in their own family, so a
-# one-line deletion in serialize_int cannot reach them. Both rules stay covered: the int family's
-# own tests and the corpus vectors that pin them run in every ordinary run.
+# Carried: all 16 controls the reference names. The ranged rules are kept in three places here
+# (serialize_int, int_relative's bounded tiers and the string length), where C++ reads all three
+# through serialize_int, so ranged-range and ranged-reconstruction patch each place.
 unknown-operation	-		
 align-padding	serialize_stream.luau	if self:_readBits(n) ~= 0 then	if self:_readBits(n) ~= 0 and n < 0 then
 float-finite	serialize_float.luau	if not floatBitsAreFinite(bits) then	if not floatBitsAreFinite(bits) and bits < 0 then
@@ -24,3 +23,8 @@ string-utf8	serialize_bytes.luau	if not utf8Valid(value) then	if not utf8Valid(v
 string-utf8-surrogate	serialize_bytes.luau	 or (rune >= 0xD800 and rune <= 0xDFFF)	
 wrong-reason	serialize_bytes.luau	return EmbeddedNul	return InvalidUtf8
 int64-through-double	serialize_int.luau	holder.value = integer.add(offset, min)	holder.value = (function(d: number): integer return if d >= 9223372036854775807 then integer.sub(integer.lshift(1i, 63i), 1i) else integer.create(d) end)(integer.tonumber(integer.add(offset, min)))
+ranged-range	serialize_int.luau	if offset > max - min then	if offset > max - min and offset < 0 then
+ranged-range	serialize_int_relative.luau	if offset > bucket.max - bucket.min then	if offset > bucket.max - bucket.min and offset < 0 then
+ranged-range	serialize_bytes.luau	if offset > maxLength then	if offset > maxLength and offset < 0 then
+ranged-reconstruction	serialize_int.luau	holder.value = offset + min	holder.value = offset
+ranged-reconstruction	serialize_int_relative.luau	previous + bucket.min + offset	previous + offset

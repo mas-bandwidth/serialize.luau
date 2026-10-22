@@ -28,6 +28,13 @@ local serialize = require("./serialize")
 local WriteStream = serialize.WriteStream
 local ReadStream = serialize.ReadStream
 local BitReader = serialize.BitReader
+local BitWriter = serialize.BitWriter
+
+local function check22(cond: boolean, what: string)
+	if not cond then
+		error(what, 3)
+	end
+end
 
 local T = {}
 
@@ -390,6 +397,40 @@ local function testFiniteDecode()
 	end, "top integer must decode to a finite float32")
 end
 
+-- The value and a precomputed delta are float32s, narrowed as Go's float32
+-- parameters are, before any arithmetic: over [1, 2] at resolution 2^-22 the
+-- double 1 + 2^-23 - 2^-40 narrows to 1 + 2^-23 and writes integer 1 (unnarrowed
+-- it writes 0); a precomputed delta of 0.0685 decodes as float32(0.0685); a
+-- precomputed delta past FLT_MAX is +inf as a float32 and raises; a finite
+-- double past FLT_MAX is not a finite float32 and raises.
+local function testFloat32Narrowing()
+	local w = WriteStream.new(buffer.create(8))
+	check22(w:serializeCompressedFloat({ value = 1 + 2 ^ -23 - 2 ^ -40 }, 1, 2, 2 ^ -22), "narrowing write refused")
+	w:flush()
+	local code = BitReader.new(w:data()):readBits(23)
+	if code ~= 1 then
+		error("the value was not narrowed to float32 before quantizing: code " .. code, 2)
+	end
+	local maxIntegerValue, bits = serialize.compressedFloatParams(0, 0.0685, 0.0000685)
+	local b = buffer.create(8)
+	local bw = BitWriter.new(b)
+	bw:writeBits(186, bits)
+	bw:flushBits()
+	local r = ReadStream.new(b)
+	local h = { value = 0 }
+	check22(r:serializeCompressedFloatPrecomputed(h, maxIntegerValue, bits, 0.0685, 0.5), "narrowed delta read refused")
+	local want = f32frombits(f32bits(f32frombits(f32bits(f32frombits(f32bits(186 / maxIntegerValue)) * f32frombits(f32bits(0.0685)))) + 0.5))
+	if f32bits(h.value) ~= f32bits(want) then
+		error("a precomputed delta was not narrowed to float32", 2)
+	end
+	raises(function()
+		ReadStream.new(buffer.create(8)):serializeCompressedFloatPrecomputed({ value = 0 }, maxIntegerValue, bits, 1e39, 0)
+	end, "precomputed compressed float constants must be exactly what CompressedFloatParams derives")
+	raises(function()
+		WriteStream.new(buffer.create(8)):serializeCompressedFloat({ value = 1e39 }, 0, 10, 0.01)
+	end, "compressed float value must be finite")
+end
+
 function T.TestSerializeCompressedFloat()
 	testConformance()
 	testTopOfRangeClamp()
@@ -397,6 +438,7 @@ function T.TestSerializeCompressedFloat()
 	testValidation()
 	testRoundTripAndMeasure()
 	testFiniteDecode()
+	testFloat32Narrowing()
 end
 
 return T

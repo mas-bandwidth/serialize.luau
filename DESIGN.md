@@ -509,12 +509,16 @@ depends on serialize-luau-bitpacker.
   requires the record's bytes; names are unique across the corpus. Each
   record runs on its own and every failing record is reported by name.
 - THE NEGATIVE CONTROLS: `make controls` (`tools/luaurun -controls`) runs every
-  control of `tools/controls/controls.tsv`. Each builds the conformance unit
-  with ONE refusal rule deleted from a copy of one src file (a needle that must
-  occur exactly once, else the control is red) and requires the corpus run to
-  fail EXACTLY the vectors of `conformance-controls/<name>.expected`;
-  `unknown-operation` instead adds `conformance-controls/unknown-operation.txt`
-  to the corpus, whose one vector must fail. 14 of the reference's 16 controls
-  are carried; ranged-reconstruction and ranged-range are not, because their
-  lists assume C++'s int_relative and string length reads through
-  serialize_int, which this port reads in their own family.
+  control of `tools/controls/controls.tsv`, all 16 the reference names. Each
+  builds the conformance unit with ONE refusal rule deleted from a copy of the
+  source (each needle must occur exactly once, else the control is red; a rule
+  kept in several places, the ranged offset and its reconstruction in
+  serialize_int, int_relative's bounded tiers and the string length, is
+  deleted from each) and requires the corpus run to fail EXACTLY the vectors
+  of `conformance-controls/<name>.expected`; `unknown-operation` instead adds
+  `conformance-controls/unknown-operation.txt` to the corpus, whose one vector
+  must fail.
+- A vector with a key the runner does not know, a refusal with no reason or a
+  reason off the list, or no expect line is malformed, and the run is red. A
+  refused read's destination starts at a marker no reader would write, and
+  the read after a refusal must fail, consume no bits and write nothing.

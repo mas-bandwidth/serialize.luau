@@ -47,6 +47,26 @@ local REASONS: { [string]: boolean } = {
 	non_canonical = true,
 }
 
+-- UNTOUCHED is the marker a refused read's destination starts with: no reader
+-- could plausibly write it, so a refusal that writes its destination is seen.
+-- The float steps, whose outcome is traced as bits, use 12345.0 instead.
+local UNTOUCHED = "UNTOUCHED"
+
+-- The keys a record may carry (STANDARD.md, The vector format). Any other key
+-- makes the vector malformed and the run red: a key a runner skips is a check
+-- nobody ran.
+local KEYS: { [string]: boolean } = {
+	operation = true,
+	name = true,
+	param = true,
+	bytes = true,
+	expect = true,
+	consumed = true,
+	writer = true,
+	writer_input = true,
+	measure_at_least = true,
+}
+
 local function countOps(text: string): number
 	local n = 0
 	for line in text:gmatch("[^\n]+") do
@@ -81,6 +101,9 @@ local function parseVecFile(text: string): { any }
 	local cur: any = nil
 	local function flush()
 		if cur ~= nil then
+			if cur.expect == nil then
+				fail("malformed vector " .. cur.name .. ": no expect line")
+			end
 			table.insert(records, cur)
 			cur = nil
 		end
@@ -97,6 +120,13 @@ local function parseVecFile(text: string): { any }
 			end
 			cur = { op = op, name = "", params = {}, bytes = {}, expect = nil, consumed = nil, writer = false, writerInput = nil, measure = nil, steps = {} }
 		else
+			local key = trimmed:match("^(%S+)")
+			if key == nil or not KEYS[key] or key == "operation" then
+				fail("malformed vector " .. cur.name .. ": unknown key in " .. trimmed)
+			end
+			if key == "writer" and trimmed ~= "writer canonical" then
+				fail("malformed vector " .. cur.name .. ": " .. trimmed)
+			end
 			local v = trimmed:match("^name (.+)$")
 			if v ~= nil then cur.name = v end
 			local pk, pv = trimmed:match("^param ([%w_]+) = (.+)$")
@@ -244,7 +274,8 @@ end
 -- checks).
 
 local function checkTerminal(r: any, op: string, args: { any })
-	local h = { value = 0 }
+	local h: { value: any } = { value = UNTOUCHED }
+	local before = r:bitsProcessed()
 	local failed: boolean
 	if op == "bits" then
 		failed = not r:serializeBits(h, 1)
@@ -254,6 +285,8 @@ local function checkTerminal(r: any, op: string, args: { any })
 		failed = not r:serializeBits64(h, 1)
 	end
 	check(failed, "a refused stream is not terminal")
+	check(r:bitsProcessed() == before, "a read after a refusal consumed bits")
+	check(h.value == UNTOUCHED, "a read after a refusal wrote its destination")
 end
 
 local function runAcceptRead(r: any, rec: any, want: any, reader: (any) -> boolean)
@@ -272,9 +305,9 @@ local function runBits(r: any, rec: any)
 		return r:serializeBits64(h, bits)
 	end
 	if rec.expect.refused then
-		local h = { value = 0 }
+		local h: { value: any } = { value = UNTOUCHED }
 		check(not readOp(h), rec.name .. ": bits refused read succeeded")
-		check(h.value == 0, rec.name .. ": refused bits read changed its holder")
+		check(h.value == UNTOUCHED, rec.name .. ": refused bits read changed its holder")
 		checkTerminal(r, "bits", {})
 		return
 	end
@@ -305,9 +338,9 @@ end
 
 local function runBool(r: any, rec: any)
 	if rec.expect.refused then
-		local h = { value = false }
+		local h: { value: any } = { value = UNTOUCHED }
 		check(not r:serializeBool(h), rec.name .. ": bool refused read succeeded")
-		check(h.value == false, rec.name .. ": refused bool read changed its holder")
+		check(h.value == UNTOUCHED, rec.name .. ": refused bool read changed its holder")
 		checkTerminal(r, "bool", {})
 		return
 	end
@@ -364,16 +397,17 @@ local function runRange(r: any, rec: any, kind: string)
 	local k = rangeKinds[kind]
 	local min = k.parse(rec.params.min)
 	local max = k.parse(rec.params.max)
-	local h = { value = min }
+	local h: { value: any } = { value = if rec.expect.refused then UNTOUCHED else min }
 	local ok = r[k.open](r, h, min, max)
 	if rec.expect.refused then
 		check(not ok, rec.name .. ": " .. kind .. " refused read succeeded")
 		check(r:error() ~= nil, rec.name .. ": " .. kind .. " refusal latched no error")
-		check(equalVal(kind, h.value, min), rec.name .. ": " .. kind .. " refusal changed its holder")
+		check(h.value == UNTOUCHED, rec.name .. ": " .. kind .. " refusal changed its holder")
 		local before = r:bitsProcessed()
-		local h2 = { value = min }
+		local h2: { value: any } = { value = UNTOUCHED }
 		check(not r[k.open](r, h2, min, max), rec.name .. ": " .. kind .. " stream was not terminal")
 		check(r:bitsProcessed() == before, rec.name .. ": " .. kind .. " terminal read consumed bits")
+		check(h2.value == UNTOUCHED, rec.name .. ": " .. kind .. " terminal read wrote its holder")
 		return
 	end
 	local want = k.parse(rec.expect.value)
@@ -393,12 +427,12 @@ local function runInt128(r: any, rec: any)
 end
 
 local function runUint128(r: any, rec: any)
-	local h = { value = Int128.new(0i, 0i) }
+	local h: { value: any } = { value = if rec.expect.refused then UNTOUCHED else Int128.new(0i, 0i) }
 	local ok = r:serializeUint128(h)
 	if rec.expect.refused then
 		check(not ok, rec.name .. ": uint128 refused read succeeded")
 		check(r:error() ~= nil, rec.name .. ": uint128 refusal latched no error")
-		check(Int128.cmp(h.value, Int128.new(0i, 0i)) == 0, rec.name .. ": uint128 refusal changed its holder")
+		check(h.value == UNTOUCHED, rec.name .. ": uint128 refusal changed its holder")
 		local before = r:bitsProcessed()
 		check(not r:serializeUint128({ value = Int128.new(0i, 0i) }), rec.name .. ": uint128 stream not terminal")
 		check(r:bitsProcessed() == before, rec.name .. ": uint128 terminal read consumed bits")
@@ -426,7 +460,9 @@ local function runFloat(r: any, rec: any)
 		check(not r:serializeFloat(h), rec.name .. ": float refused read succeeded")
 		check(h.value == 12345.0, rec.name .. ": a refused float read wrote its destination")
 		local h2 = { value = 12345.0 }
+		local before = r:bitsProcessed()
 		check(not r:serializeFloat(h2), rec.name .. ": float stream not terminal")
+		check(r:bitsProcessed() == before and h2.value == 12345.0, rec.name .. ": a float read after a refusal consumed bits or wrote its destination")
 		return
 	end
 	local h = { value = 12345.0 }
@@ -462,7 +498,9 @@ local function runDouble(r: any, rec: any)
 		check(not r:serializeDouble(h), rec.name .. ": double refused read succeeded")
 		check(h.value == 12345.0, rec.name .. ": a refused double read wrote its destination")
 		local h2 = { value = 12345.0 }
+		local before = r:bitsProcessed()
 		check(not r:serializeDouble(h2), rec.name .. ": double stream not terminal")
+		check(r:bitsProcessed() == before and h2.value == 12345.0, rec.name .. ": a double read after a refusal consumed bits or wrote its destination")
 		return
 	end
 	local h = { value = 12345.0 }
@@ -584,11 +622,11 @@ local function runFixed(r: any, rec: any)
 	local min = decToInt(rec.params.min)
 	local max = decToInt(rec.params.max)
 	if integerBits + fractionBits <= 64 then
-		local h = { value = 0i }
+		local h: { value: any } = { value = if rec.expect.refused then UNTOUCHED else 0i }
 		local ok = r:serializeFixed64(h, integerBits, fractionBits, min, max)
 		if rec.expect.refused then
 			check(not ok, rec.name .. ": fixed64 refused read succeeded")
-			check(h.value == 0i, rec.name .. ": fixed64 refusal changed its holder")
+			check(h.value == UNTOUCHED, rec.name .. ": fixed64 refusal changed its holder")
 			check(r:error() ~= nil, rec.name .. ": fixed64 refusal latched no error")
 			checkTerminal(r, "bits", {})
 			return
@@ -604,11 +642,11 @@ local function runFixed(r: any, rec: any)
 			check(sameBytes(rec.bytes, w:data()), rec.name .. ": fixed64 writer bytes mismatch")
 		end
 	else
-		local h = { value = Int128.new(0i, 0i) }
+		local h: { value: any } = { value = if rec.expect.refused then UNTOUCHED else Int128.new(0i, 0i) }
 		local ok = r:serializeFixed128(h, integerBits, fractionBits, min, max)
 		if rec.expect.refused then
 			check(not ok, rec.name .. ": fixed128 refused read succeeded")
-			check(Int128.cmp(h.value, Int128.new(0i, 0i)) == 0, rec.name .. ": fixed128 refusal changed its holder")
+			check(h.value == UNTOUCHED, rec.name .. ": fixed128 refusal changed its holder")
 			check(r:error() ~= nil, rec.name .. ": fixed128 refusal latched no error")
 			checkTerminal(r, "bits", {})
 			return
@@ -630,11 +668,11 @@ local function runCompressedFloat(r: any, rec: any)
 	local min = tonumber(rec.params.min) :: number
 	local max = tonumber(rec.params.max) :: number
 	local res = tonumber(rec.params.res) :: number
-	local h = { value = 0.0 }
+	local h = { value = 12345.0 }
 	local ok = r:serializeCompressedFloat(h, min, max, res)
 	if rec.expect.refused then
 		check(not ok, rec.name .. ": compressed_float refused read succeeded")
-		check(h.value == 0.0, rec.name .. ": compressed_float refusal changed its holder")
+		check(h.value == 12345.0, rec.name .. ": compressed_float refusal changed its holder")
 		check(r:error() ~= nil, rec.name .. ": compressed_float refusal latched no error")
 		checkTerminal(r, "bits", {})
 		return
@@ -690,7 +728,7 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 	local dec = st.decoded
 	if op == "bits" then
 		local n = tonumber(st[2]) :: number
-		local base = if dec ~= nil then dec else 0
+		local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else 0
 		local h = { value = base }
 		local ok
 		if n <= 32 then
@@ -702,7 +740,7 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		if ok then st.decoded = h.value else check(h.value == base, "a refused bits step changed its holder") end
 		return ok
 	elseif op == "bool" then
-		local base: boolean = if dec ~= nil then dec else false
+		local base: any = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else false
 		local h = { value = base }
 		local ok = r:serializeBool(h)
 		table.insert(out, { op = op, ok = ok, value = h.value })
@@ -753,23 +791,23 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		return ok
 	elseif op == "string" then
 		local n = tonumber(st[2]) :: number
-		local base = if dec ~= nil then dec else ""
+		local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else ""
 		local h = { value = base }
 		local ok = r:serializeString(h, n)
 		table.insert(out, { op = op, ok = ok, str = h.value })
 		if ok then st.decoded = h.value else check(h.value == base, "a refused string step wrote its destination") end
 		return ok
 	elseif op == "uint128" then
-		local base = if dec ~= nil then dec else Int128.new(0i, 0i)
+		local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else Int128.new(0i, 0i)
 		local h = { value = base }
 		local ok = r:serializeUint128(h)
 		table.insert(out, { op = op, ok = ok, u128 = h.value })
-		if ok then st.decoded = h.value else check(Int128.cmp(h.value, base) == 0, "a refused uint128 step changed its holder") end
+		if ok then st.decoded = h.value else check(h.value == base, "a refused uint128 step changed its holder") end
 		return ok
 	elseif op == "int" then
 		local mn = tonumber(st[2]) :: number
 		local mx = tonumber(st[3]) :: number
-		local base = if dec ~= nil then dec else mn
+		local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else mn
 		local h = { value = base }
 		local ok = r:serializeInt(h, mn, mx)
 		table.insert(out, { op = op, ok = ok, value = h.value })
@@ -778,7 +816,7 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 	elseif op == "int64" then
 		local mn = decToInt(st[2])
 		local mx = decToInt(st[3])
-		local base = if dec ~= nil then dec else mn
+		local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else mn
 		local h = { value = base }
 		local ok = r:serializeInt64(h, mn, mx)
 		table.insert(out, { op = op, ok = ok, i64 = h.value })
@@ -787,15 +825,15 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 	elseif op == "int128" then
 		local mn = parse128(st[2])
 		local mx = parse128(st[3])
-		local base = if dec ~= nil then dec else mn
+		local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else mn
 		local h = { value = base }
 		local ok = r:serializeInt128(h, mn, mx)
 		table.insert(out, { op = op, ok = ok, i128 = h.value })
-		if ok then st.decoded = h.value else check(Int128.cmp(h.value, base) == 0, "a refused int128 step changed its holder") end
+		if ok then st.decoded = h.value else check(h.value == base, "a refused int128 step changed its holder") end
 		return ok
 	elseif op == "int_relative" then
 		local prev = tonumber(st[2]) :: number
-		local base = if dec ~= nil then dec else -1
+		local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else -1
 		local h = { value = base }
 		local ok = r:serializeIntRelative(prev, h)
 		table.insert(out, { op = op, ok = ok, value = h.value })
@@ -807,25 +845,25 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local mn = decToInt(st[4])
 		local mx = decToInt(st[5])
 		if ib + fb <= 64 then
-			local base = if dec ~= nil then dec else 0i
+			local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else 0i
 			local h = { value = base }
 			local ok = r:serializeFixed64(h, ib, fb, mn, mx)
 			table.insert(out, { op = op, ok = ok, value = h.value })
 			if ok then st.decoded = h.value else check(h.value == base, "a refused fixed64 step changed its holder") end
 			return ok
 		else
-			local base = if dec ~= nil then dec else Int128.new(0i, 0i)
+			local base = if dec ~= nil then dec elseif r:isReading() then UNTOUCHED else Int128.new(0i, 0i)
 			local h = { value = base }
 			local ok = r:serializeFixed128(h, ib, fb, mn, mx)
 			table.insert(out, { op = op, ok = ok, i128 = h.value })
-			if ok then st.decoded = h.value else check(Int128.cmp(h.value, base) == 0, "a refused fixed128 step changed its holder") end
+			if ok then st.decoded = h.value else check(h.value == base, "a refused fixed128 step changed its holder") end
 			return ok
 		end
 	elseif op == "compressed_float" then
 		local mn = tonumber(st[2]) :: number
 		local mx = tonumber(st[3]) :: number
 		local res = tonumber(st[4]) :: number
-		local base = if dec ~= nil then dec else 0.0
+		local base = if dec ~= nil then dec elseif r:isReading() then 12345.0 else 0.0
 		local h = { value = base }
 		local ok = r:serializeCompressedFloat(h, mn, mx, res)
 		table.insert(out, { op = op, ok = ok, bits = serialize._family("float").f32bits(h.value) })
@@ -1057,6 +1095,25 @@ local function testUnknownOperationControl()
 	check(raised, "an operation with no runner must be REJECTED, not skipped")
 end
 
+-- testMalformedVectors: a vector the runner cannot fully check is malformed
+-- and makes the run red, never a skip: an unknown key (a writer_input the
+-- runner did not know would be skipped without a sound), a refusal with no
+-- reason or a reason off the closed list, and a record with no expect.
+local function testMalformedVectors()
+	local cases = {
+		{ "operation bool\nname m1\nbytes 01\nexpect value = true\nconsumed 1\nwriter_inputs bits = 0x0\n", "unknown key" },
+		{ "operation bool\nname m2\nbytes\nexpect refused\n", "states no reason" },
+		{ "operation bool\nname m3\nbytes\nexpect refused overflow\n", "states no reason" },
+		{ "operation bool\nname m4\nbytes 01\nconsumed 1\n", "no expect line" },
+		{ "operation bool\nname m5\nbytes 01\nexpect value = true\nconsumed 1\nwriter maybe\n", "writer maybe" },
+	}
+	for _, case in cases do
+		local ok, err = pcall(parseVecFile, case[1])
+		check(not ok and string.find(tostring(err), case[2], 1, true) ~= nil,
+			"a malformed vector was accepted (" .. case[2] .. "): " .. tostring(err))
+	end
+end
+
 local function sortedInputNames(): { string }
 	local names = {}
 	for k in (inputs :: any) do
@@ -1111,6 +1168,7 @@ function T.TestConformanceCorpus()
 		end
 		print("conformance: " .. total .. " of " .. total .. " vectors pass")
 		testUnknownOperationControl()
+		testMalformedVectors()
 		return
 	end
 	-- A NEGATIVE CONTROL run: the failures must be exactly the expected list.

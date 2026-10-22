@@ -96,7 +96,9 @@ local function writeCommon(s: any, h: any, maxIntegerValue: number, bits: number
 	if s:_latched() then
 		return false
 	end
-	local n = fround(fround(h.value - min) / delta)
+	-- the value is a float32, narrowed as Go's float32(v) narrows it, before
+	-- any arithmetic (DESIGN.md (e))
+	local n = fround(fround(fround(h.value) - min) / delta)
 	if not (n >= 0) then
 		n = 0
 	elseif not (n <= 1) then
@@ -139,14 +141,17 @@ local function readCommon(s: any, h: any, maxIntegerValue: number, bits: number,
 	return true
 end
 
--- The dispatched write arms. A non-finite value raises before the latch check and
--- before any arithmetic (STANDARD.md compressed_float; DESIGN.md (e)).
+-- The dispatched write arms. A value that is not finite as a float32 (NaN, an
+-- infinity, or a finite double past FLT_MAX, which narrows to one) raises
+-- before the latch check and before any arithmetic (STANDARD.md
+-- compressed_float; DESIGN.md (e)). The precomputed arms narrow delta to
+-- float32 on entry, as Go's float32 parameter is, before it is validated.
 function M.writeCompressedFloat(s: any, h: any, min: number, max: number, resolution: number): boolean
 	local value = h.value
 	if type(value) ~= "number" then
 		error(RAISE_VALUE, 2)
 	end
-	if not isFinite(value) then
+	if not isFinite(fround(value)) then
 		error(RAISE_NONFINITE, 2)
 	end
 	local maxIntegerValue, bits, delta = M.compressedFloatParams(min, max, resolution)
@@ -158,9 +163,10 @@ function M.writeCompressedFloatPrecomputed(s: any, h: any, maxIntegerValue: numb
 	if type(value) ~= "number" then
 		error(RAISE_VALUE_PRECOMPUTED, 2)
 	end
-	if not isFinite(value) then
+	if not isFinite(fround(value)) then
 		error(RAISE_NONFINITE, 2)
 	end
+	delta = fround(delta)
 	validateCompressedFloatConstants(maxIntegerValue, bits, delta)
 	return writeCommon(s, h, maxIntegerValue, bits, delta, fround(min))
 end
@@ -171,6 +177,7 @@ function M.readCompressedFloat(s: any, h: any, min: number, max: number, resolut
 end
 
 function M.readCompressedFloatPrecomputed(s: any, h: any, maxIntegerValue: number, bits: number, delta: number, min: number): boolean
+	delta = fround(delta)
 	validateCompressedFloatConstants(maxIntegerValue, bits, delta)
 	return readCommon(s, h, maxIntegerValue, bits, delta, fround(min))
 end
@@ -181,6 +188,7 @@ function M.measureCompressedFloat(s: any, h: any, min: number, max: number, reso
 end
 
 function M.measureCompressedFloatPrecomputed(s: any, h: any, maxIntegerValue: number, bits: number, delta: number, min: number): boolean
+	delta = fround(delta)
 	validateCompressedFloatConstants(maxIntegerValue, bits, delta)
 	return s:_measure(bits)
 end
