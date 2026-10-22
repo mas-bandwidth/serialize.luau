@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  push:
+    branches: [main, sprint/serialize-luau]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test on the pinned Luau
+    # THE FORK GUARD: this repository is PUBLIC and these are its own fleet runners, so a
+    # pull request from a fork never reaches them (tools/checkci/check-ci.sh holds every job to it).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The pin -- URL and sha256 -- lives once, in the Makefile. The cache key
+      # is derived from that one pin here rather than repeated; make dist-luau
+      # refuses any archive whose sha256 is not the pin, before it unpacks it.
+      - name: Check CI workflow invariants
+        run: make check-ci
+
+      - name: Read the interpreter pin from the Makefile
+        id: pin
+        run: |
+          sha=$(sed -n 's/^LUAU_ZIP_SHA[[:space:]]*:=[[:space:]]*//p' Makefile | head -1)
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache dist/
+        uses: actions/cache@v4
+        with:
+          path: dist
+          key: luau-${{ steps.pin.outputs.sha }}
+
+      - name: Fetch the pinned Luau
+        run: make dist-luau
+
+      - name: Test
+        run: make test
+
+      # A later card adds fuzz/go.mod; until then there is nothing to fuzz and
+      # no Go toolchain is installed.
+      - name: Set up Go for the fuzzers
+        if: hashFiles('fuzz/go.mod') != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: fuzz/go.mod
+
+      - name: Fuzz
+        if: hashFiles('fuzz/go.mod') != ''
+        run: make fuzz
+
+  corpus:
+    name: STANDARD.md and conformance/ match the corpus pin
+    # THE FORK GUARD: this repository is PUBLIC and these are its own fleet runners, so a
+    # pull request from a fork never reaches them (tools/checkci/check-ci.sh holds every job to it).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
+    env:
+      SERIALIZE_TAG: v1.17.0
+    steps:
+      - uses: actions/checkout@v4
+
+      # STANDARD.md and conformance/ are VERBATIM vendored copies (DESIGN.md,
+      # "The vendored standard"). They must be the pinned release's own bytes;
+      # a divergence is red, never a skip.
+      - name: Check out the reference at the corpus pin
+        run: git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git "$RUNNER_TEMP/serialize"
+
+      - name: The vendored corpus and standard are the pin's
+        run: |
+          diff -ru "$RUNNER_TEMP/serialize/conformance" conformance
+          diff -ru "$RUNNER_TEMP/serialize/STANDARD.md" STANDARD.md
