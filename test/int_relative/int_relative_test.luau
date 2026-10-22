@@ -50,6 +50,7 @@ type Record = {
 	value: number?,
 	consumed: number?,
 	writer: boolean,
+	reason: string?,
 }
 
 local function parse(text: string): ({ Record }, number)
@@ -80,7 +81,9 @@ local function parse(text: string): ({ Record }, number)
 				rec.kind = "bits"
 			else
 				check(kind == "refused", "record " .. rec.name .. " expect kind " .. tostring(kind))
+				check(string.match(value, "^[%l_]+$") ~= nil, "record " .. rec.name .. " states no refusal reason")
 				rec.kind = "refused"
+				rec.reason = value
 			end
 			table.insert(records, rec)
 			current = nil
@@ -159,7 +162,7 @@ local function runRecords()
 		local ok, holder, reader = readCurrent(rec.previous, data)
 		if rec.kind == "refused" then
 			check(not ok, rec.name .. ": expected a refusal")
-			check(reader:error() ~= nil, rec.name .. ": a refusal latches")
+			check(reader:error() == rec.reason, rec.name .. ": refused for " .. tostring(reader:error()) .. ", the vector states " .. tostring(rec.reason))
 			check(holder.value == -1, rec.name .. ": a refused read leaves the holder unwritten")
 			-- after a refusal the stream is terminal: a second read refuses too
 			local again = { value = -1 }
@@ -259,9 +262,43 @@ local function validation()
 	end
 end
 
+-- canonical pins the absolute tier's canonical rule (STANDARD.md
+-- int_relative, "The absolute tier is canonical too"): an absolute tier whose
+-- difference a bounded tier carries is refused as non_canonical, its holder
+-- unwritten; one past the last bounded tier is accepted; and the domain and
+-- ordering rule comes first, so a current past the domain with a small
+-- difference is value_out_of_range, computed without wrapping.
+local function canonical()
+	local function absolute(previous: number, current: number): (boolean, any, any)
+		local b = buffer.create(8)
+		buffer.writebits(b, 0, 6, 0)
+		buffer.writebits(b, 6, 32, current)
+		return readCurrent(previous, b)
+	end
+	for _, difference in { 1, 2, 6, 7, 280, 4377, 69913, 69914 } do
+		local ok, holder, reader = absolute(100, 100 + difference)
+		check(not ok, "absolute difference " .. difference .. " is refused")
+		check(reader:error() == serialize.SerializeError.NonCanonical, "absolute difference " .. difference .. " refused for " .. tostring(reader:error()))
+		check(holder.value == -1, "absolute difference " .. difference .. " leaves the destination unwritten")
+	end
+	local ok, holder = absolute(100, 100 + 69915)
+	check(ok and holder.value == 100 + 69915, "absolute difference 69915 is accepted")
+	local okTop, holderTop = absolute(INT_RELATIVE_MAX - 69915, INT_RELATIVE_MAX)
+	check(okTop and holderTop.value == INT_RELATIVE_MAX, "the domain maximum from the last tier boundary is accepted")
+	for _, current in { INT_RELATIVE_MAX + 1, INT_RELATIVE_MAX + 10, 0xFFFFFFFF } do
+		local okPast, holderPast, reader = absolute(INT_RELATIVE_MAX - 5, current)
+		check(not okPast, "current " .. current .. " past the domain is refused")
+		check(reader:error() == serialize.SerializeError.ValueOutOfRange, "current " .. current .. " past the domain refused for " .. tostring(reader:error()))
+		check(holderPast.value == -1, "current " .. current .. " leaves the destination unwritten")
+	end
+	local okBelow, _, readerBelow = absolute(100, 50)
+	check(not okBelow and readerBelow:error() == serialize.SerializeError.ValueOutOfRange, "a current below previous is value_out_of_range, not non_canonical")
+end
+
 function T.TestSerializeIntRelative()
 	runRecords()
 	validation()
+	canonical()
 end
 
 return T

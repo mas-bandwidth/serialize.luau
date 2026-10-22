@@ -55,6 +55,11 @@ local function parseRecords(text: string): ({ any }, number)
 			local expect = string.match(line, "^expect%s+(.+)$")
 			if expect ~= nil then
 				current.expect = expect
+				local reason = string.match(expect, "^refused (%S+)$")
+				if reason ~= nil then
+					current.expect = "refused"
+					current.reason = reason
+				end
 				local value = string.match(expect, "^value%s*=%s*(.+)$")
 				if value ~= nil then
 					current.expectValue = value
@@ -263,8 +268,8 @@ local function runFile(file: string, label: string)
 			if ok then
 				fail(what .. ": expected a refusal, got a value")
 			end
-			if rs:error() == nil then
-				fail(what .. ": refusal did not latch an error")
+			if rs:error() ~= record.reason then
+				fail(what .. ": refused for " .. tostring(rs:error()) .. ", the vector states " .. tostring(record.reason))
 			end
 			if not kind.equal(holder.value, sentinel) then
 				fail(what .. ": refusal touched the destination")

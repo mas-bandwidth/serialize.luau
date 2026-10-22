@@ -1,8 +1,8 @@
 --!strict
--- serialize_bytes.luau — bytes, string and wstring (DESIGN.md (g) and (h);
+-- serialize_bytes.luau — bytes and string (DESIGN.md (g) and (h);
 -- STANDARD.md, Bytes and Strings, Reader Obligations, The vector format).
 --
--- Wire compatible with serialize.go v1.15.1: the same values produce the same
+-- Wire compatible with serialize.go v2.0.0: the same values produce the same
 -- bytes, every refusal STANDARD.md and serialize.go state is made, a refusal
 -- writes nothing (the whole operation's width is checked before any bit
 -- moves), reads never go past the data's end and hostile bytes never raise.
@@ -16,9 +16,11 @@
 
 local Stream = require("./serialize_stream")
 
-local Overflow = Stream.SerializeError.Overflow
+local PastEnd = Stream.SerializeError.PastEnd
 local ValueOutOfRange = Stream.SerializeError.ValueOutOfRange
-local Align = Stream.SerializeError.Align
+local NonzeroPadding = Stream.SerializeError.NonzeroPadding
+local InvalidUtf8 = Stream.SerializeError.InvalidUtf8
+local EmbeddedNul = Stream.SerializeError.EmbeddedNul
 
 local M: { [string]: any } = {}
 
@@ -46,7 +48,7 @@ local function bitsRequired(min: number, max: number): number
 end
 
 -- validateBufferSize enforces serialize.go's panicBufferSize: bufferSize is
--- in [1, 1<<31) and an integer (STANDARD.md string, wstring; DESIGN.md (a)).
+-- in [1, 1<<31) and an integer (STANDARD.md string; DESIGN.md (a)).
 local function validateBufferSize(bufferSize: any)
 	if type(bufferSize) ~= "number" or bufferSize % 1 ~= 0 then
 		error("serialize: string buffer size must be an integer", 3)
@@ -82,19 +84,11 @@ local function readBitsRaw(s: any, bits: number): number
 	return value
 end
 
--- readAlign verifies that the padding bits are zero (STANDARD.md align).
+-- readAlign is the stream's own align (STANDARD.md align): bytes and string
+-- verify their padding through the one align every read shares, so the
+-- padding rule lives in one place.
 local function readAlign(s: any): boolean
-	local n = s:_alignBits()
-	if n == 0 then
-		return true
-	end
-	if s._bits + n > s._numBits then
-		return s:_fail(Overflow)
-	end
-	if readBitsRaw(s, n) ~= 0 then
-		return s:_fail(Align)
-	end
-	return true
+	return s:serializeAlign()
 end
 
 -- writeLength writes the narrow string length as serialize_int(length, 0,
@@ -109,7 +103,7 @@ end
 local function readLength(s: any, maxLength: number): (boolean, number)
 	local bits = bitsRequired(0, maxLength)
 	if s._bits + bits > s._numBits then
-		s:_fail(Overflow)
+		s:_fail(PastEnd)
 		return false, 0
 	end
 	local offset = readBitsRaw(s, bits)
@@ -121,8 +115,7 @@ local function readLength(s: any, maxLength: number): (boolean, number)
 end
 
 -- The Go utf8 decoder's accept/reject decision and its invalid-byte advance:
--- an invalid sequence is U+FFFD and consumes one byte (DESIGN.md (g): the
--- writer walks the bytes as Go's `for range` does).
+-- an invalid sequence is U+FFFD and consumes one byte (DESIGN.md (g)).
 local function decodeRune(value: string, i: number): (number, number, boolean)
 	local n = #value
 	if i > n then
@@ -177,24 +170,19 @@ local function utf8Valid(value: string): boolean
 	return true
 end
 
--- utf16Units is the wire's unit sequence: Go's `for range` code points, one
--- unit per basic-plane code point and a surrogate pair per astral code point
--- (STANDARD.md wstring; DESIGN.md (g)).
-local function utf16Units(value: string): { number }
-	local units = {}
-	local i = 1
-	while i <= #value do
-		local rune, size = decodeRune(value, i)
-		if rune >= 0x10000 then
-			local v = rune - 0x10000
-			units[#units + 1] = 0xD800 + math.floor(v / 0x400)
-			units[#units + 1] = 0xDC00 + v % 0x400
-		else
-			units[#units + 1] = rune
-		end
-		i += size
+-- textRefusal is the reason a string payload is refused for, or nil
+-- (STANDARD.md string): a zero byte anywhere is EmbeddedNul, scanned over the
+-- whole payload BEFORE the encoding is checked, so a payload that breaks both
+-- rules is EmbeddedNul; then a payload that is not well-formed UTF-8 is
+-- InvalidUtf8.
+local function textRefusal(value: string): string?
+	if string.find(value, "\0", 1, true) ~= nil then
+		return EmbeddedNul
 	end
-	return units
+	if not utf8Valid(value) then
+		return InvalidUtf8
+	end
+	return nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -210,7 +198,7 @@ function M.writeBytes(s: any, data: any): boolean
 	local count = buffer.len(data)
 	local align = s:_alignBits()
 	if s._bits + align + count * 8 > s._numBits then
-		return s:_fail(Overflow)
+		return s:_fail(PastEnd)
 	end
 	writeBitsRaw(s, 0, align)
 	if count > 0 then
@@ -236,7 +224,7 @@ function M.readBytes(s: any, data: any): boolean
 	end
 	local count = buffer.len(data)
 	if s._bits + count * 8 > s._numBits then
-		return s:_fail(Overflow)
+		return s:_fail(PastEnd)
 	end
 	if count > 0 then
 		if hasBitpacker then
@@ -264,7 +252,9 @@ end
 
 -- ---------------------------------------------------------------------------
 -- string (STANDARD.md string; DESIGN.md (g): length, align, bytes; the reader
--- refuses an interior NUL and malformed UTF-8 with ValueOutOfRange).
+-- refuses a zero byte with EmbeddedNul, then malformed UTF-8 with InvalidUtf8,
+-- and the writer refuses the same payloads for the same reasons: a writer is
+-- handed well-formed UTF-8 with no zero byte).
 
 function M.writeString(s: any, holder: any, bufferSize: any): boolean
 	if type(holder) ~= "table" then
@@ -283,10 +273,14 @@ function M.writeString(s: any, holder: any, bufferSize: any): boolean
 	if length >= bufferSize then
 		return s:_fail(ValueOutOfRange)
 	end
+	local refusal = textRefusal(value)
+	if refusal ~= nil then
+		return s:_fail(refusal)
+	end
 	local lengthBits = bitsRequired(0, maxLength)
 	local align = (8 - (s._bits + lengthBits) % 8) % 8
 	if s._bits + lengthBits + align + length * 8 > s._numBits then
-		return s:_fail(Overflow)
+		return s:_fail(PastEnd)
 	end
 	writeLength(s, length, maxLength)
 	writeBitsRaw(s, 0, align)
@@ -316,8 +310,10 @@ function M.readString(s: any, holder: any, bufferSize: any): boolean
 	if not readAlign(s) then
 		return false
 	end
+	-- the claimed length is checked against the bytes left BEFORE anything
+	-- the size of that claim is allocated
 	if s._bits + length * 8 > s._numBits then
-		return s:_fail(Overflow)
+		return s:_fail(PastEnd)
 	end
 	local value: string
 	if hasBitpacker then
@@ -330,11 +326,9 @@ function M.readString(s: any, holder: any, bufferSize: any): boolean
 		value = buffer.readstring(s._data, s._bits // 8, length)
 		s._bits += length * 8
 	end
-	if string.find(value, "\0", 1, true) ~= nil then
-		return s:_fail(ValueOutOfRange)
-	end
-	if not utf8Valid(value) then
-		return s:_fail(ValueOutOfRange)
+	local refusal = textRefusal(value)
+	if refusal ~= nil then
+		return s:_fail(refusal)
 	end
 	holder.value = value
 	return true
@@ -362,100 +356,6 @@ function M.measureString(s: any, holder: any, bufferSize: any): boolean
 		return false
 	end
 	return s:_measure(length * 8)
-end
-
--- ---------------------------------------------------------------------------
--- wstring (STANDARD.md wstring; DESIGN.md (g): length in UTF-16 code units,
--- then each unit as 32 bits, with no alignment anywhere).
-
-function M.writeWideString(s: any, holder: any, bufferSize: any): boolean
-	if type(holder) ~= "table" then
-		error("serialize: serializeWideString holder must be a table", 2)
-	end
-	validateBufferSize(bufferSize)
-	if type(holder.value) ~= "string" then
-		error("serialize: serializeWideString value must be a string", 2)
-	end
-	if s:_latched() then
-		return false
-	end
-	local units = utf16Units(holder.value)
-	local length = #units
-	if length >= bufferSize then
-		return s:_fail(ValueOutOfRange)
-	end
-	local lengthBits = bitsRequired(0, bufferSize - 1)
-	if s._bits + lengthBits + length * 32 > s._numBits then
-		return s:_fail(Overflow)
-	end
-	writeLength(s, length, bufferSize - 1)
-	for i = 1, #units do
-		writeBitsRaw(s, units[i], 32)
-	end
-	return true
-end
-
-function M.readWideString(s: any, holder: any, bufferSize: any): boolean
-	if type(holder) ~= "table" then
-		error("serialize: serializeWideString holder must be a table", 2)
-	end
-	validateBufferSize(bufferSize)
-	if s:_latched() then
-		return false
-	end
-	local ok, length = readLength(s, bufferSize - 1)
-	if not ok then
-		return false
-	end
-	if s._bits + length * 32 > s._numBits then
-		return s:_fail(Overflow)
-	end
-	local parts = {}
-	local remaining = length
-	while remaining > 0 do
-		local unit = readBitsRaw(s, 32)
-		remaining -= 1
-		if unit == 0 or unit > 0xFFFF or (unit >= 0xDC00 and unit <= 0xDFFF) then
-			return s:_fail(ValueOutOfRange)
-		end
-		if unit >= 0xD800 and unit <= 0xDBFF then
-			if remaining == 0 then
-				return s:_fail(ValueOutOfRange)
-			end
-			local low = readBitsRaw(s, 32)
-			remaining -= 1
-			if low < 0xDC00 or low > 0xDFFF then
-				return s:_fail(ValueOutOfRange)
-			end
-			local codepoint = 0x10000 + (unit - 0xD800) * 0x400 + (low - 0xDC00)
-			parts[#parts + 1] = utf8.char(codepoint)
-		else
-			parts[#parts + 1] = utf8.char(unit)
-		end
-	end
-	holder.value = table.concat(parts)
-	return true
-end
-
-function M.measureWideString(s: any, holder: any, bufferSize: any): boolean
-	if type(holder) ~= "table" then
-		error("serialize: serializeWideString holder must be a table", 2)
-	end
-	validateBufferSize(bufferSize)
-	if type(holder.value) ~= "string" then
-		error("serialize: serializeWideString value must be a string", 2)
-	end
-	if s:_latched() then
-		return false
-	end
-	local length = #utf16Units(holder.value)
-	if length >= bufferSize then
-		return s:_fail(ValueOutOfRange)
-	end
-	if not s:_measure(bitsRequired(0, bufferSize - 1)) then
-		return false
-	end
-	return s:_measure(length * 32)
 end
 
 return table.freeze(M)

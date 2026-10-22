@@ -8,6 +8,9 @@
 #
 # make test          analyze src/*.luau, then run every test/*/*_test.luau
 # make test T=<name> analyze, then run the files of test/<name>/ only
+# make controls      the negative controls of tools/controls/controls.tsv: each
+#                    deletes one refusal rule and must fail exactly its
+#                    conformance-controls/<name>.expected vectors
 #
 # A later card adds its own targets in its own make/<card>.mk, included below,
 # so no two cards edit this file.
@@ -23,7 +26,7 @@ export LUAU LUAU_ANALYZE
 GO ?= go
 LUAURUN := build/luaurun
 
-.PHONY: all dist-luau toolchain-luau analyze test clean
+.PHONY: all dist-luau toolchain-luau analyze test controls clean
 all: test
 
 # dist-luau fetches the pinned release and REFUSES any archive whose sha256 is
@@ -62,6 +65,11 @@ analyze: toolchain-luau
 # directory). A missing or empty test/<name>/ fails, naming it: never a skip.
 test: analyze $(LUAURUN)
 	@./$(LUAURUN) -root $(CURDIR) $(T)
+
+# controls runs every negative control (STANDARD.md, "A gate nobody has seen go
+# red"); a control that fails more or fewer vectors than its list is red.
+controls: toolchain-luau $(LUAURUN)
+	@./$(LUAURUN) -root $(CURDIR) -controls
 
 clean:
 	rm -rf build

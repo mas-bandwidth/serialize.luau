@@ -2,7 +2,7 @@
 -- serialize.luau — the entry: returns the API table (DESIGN.md (a)).
 --
 -- serialize.luau is a bitpacking serializer for Luau, wire compatible with
--- serialize (C++, STANDARD.md, format version 1.1) and serialize.go v1.15.1:
+-- serialize (C++, STANDARD.md, format version 2.0) and serialize.go v2.0.0:
 -- the same values produce the same bytes. Load it as require("./serialize")
 -- from a file in the same directory; every module it loads is required as
 -- "./serialize_<name>" from this directory alone (DESIGN.md (f)).
@@ -34,7 +34,7 @@ end
 local S = {}
 
 -- The wire format version this library implements (STANDARD.md, Format version).
-S.FORMAT_VERSION = "1.1"
+S.FORMAT_VERSION = "2.0"
 
 S.SerializeError = Stream.SerializeError
 S.WriteStream = Stream.WriteStream

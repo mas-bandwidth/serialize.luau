@@ -123,8 +123,12 @@ local function parseRecords(text: string): { any }
 						cur.bytes[#cur.bytes + 1] = tonumber(b, 16)
 					end
 				elseif k == "expect" then
-					if v:find("refused", 1, true) then
+					local reason = v:match("^refused (%S+)$")
+					if reason ~= nil then
 						cur.want = "refused"
+						cur.reason = reason
+					elseif v:find("refused", 1, true) then
+						error("expect refused without a reason in " .. tostring(cur.name), 2)
 					else
 						cur.want = "value"
 						cur.value = v:match("value%s*=%s*(%S+)$")
@@ -196,6 +200,9 @@ local function runReadRecord(rec)
 				if s:ok() then
 					error("refusal did not latch", 2)
 				end
+				if s:error() ~= rec.reason then
+					error("refused for " .. tostring(s:error()) .. ", the vector states " .. tostring(rec.reason), 2)
+				end
 			end
 		end)
 		if not ok then
@@ -226,6 +233,9 @@ local function runReadRecord(rec)
 				end
 				if s:ok() then
 					error("refusal did not latch", 2)
+				end
+				if s:error() ~= rec.reason then
+					error("refused for " .. tostring(s:error()) .. ", the vector states " .. tostring(rec.reason), 2)
 				end
 			end
 		end)

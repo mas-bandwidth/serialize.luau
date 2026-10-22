@@ -15,7 +15,7 @@
 local RAISE_MINMAX = "serialize: min must not be greater than max"
 local RAISE_INT128 = "serialize: serializeInt128 parameters must be Int128 pairs"
 
-local OVERFLOW = "overflow"
+local PAST_END = "past_end"
 local OUT_OF_RANGE = "value_out_of_range"
 
 local MASK32 = 0xffffffffi
@@ -277,7 +277,7 @@ function writeInt128(s: any, holder: any, min: any, max: any): boolean
 		return s:_measure(bits)
 	end
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	if bits > 0 then
 		writeGroups(s, sub(value, min), bits)
@@ -297,7 +297,7 @@ function readInt128(s: any, holder: any, min: any, max: any): boolean
 	end
 	local bits = bitsRequired128(min, max)
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	if bits == 0 then
 		holder.value = new(min.lo, min.hi)
@@ -337,7 +337,7 @@ function writeUint128(s: any, holder: any): boolean
 		return false
 	end
 	if s:_available() < 128 then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	s:_writeBits64(holder.value.lo, 64)
 	s:_writeBits64(holder.value.hi, 64)
@@ -352,7 +352,7 @@ function readUint128(s: any, holder: any): boolean
 		return false
 	end
 	if s:_available() < 128 then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	local lo = s:_readBits64(64)
 	local hi = s:_readBits64(64)

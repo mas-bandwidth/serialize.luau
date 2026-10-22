@@ -1,17 +1,20 @@
 --!strict
--- strings_test.luau — TestSerializeStrings (serialize-luau-strings): bytes,
--- string and wstring (DESIGN.md (a), (g), (h); STANDARD.md, Bytes and Strings,
+-- strings_test.luau — TestSerializeStrings (serialize-luau-strings): bytes
+-- and string (DESIGN.md (a), (g), (h); STANDARD.md, Bytes and Strings,
 -- Reader Obligations, The vector format).
 --
 -- It pins:
---   1. every record of conformance/bytes.txt, string.txt and wstring.txt, as a
---      runner must: accepted reads decode the stated value and consume the
---      stated bits; refused reads are refused, leave a scalar destination
---      untouched and leave the stream terminal; every `writer canonical`
---      record is reproduced byte for byte;
---   2. serialize.go v1.15.1's TestSerializeWideStringFamilyPin bytes;
---   3. the wstring length fit check at its boundary
---      (TestWideStringLengthValidatedBeforeNarrowing).
+--   1. every record of conformance/bytes.txt and string.txt, as a runner
+--      must: accepted reads decode the stated value, byte for byte, and
+--      consume the stated bits; refused reads are refused for their stated
+--      reason, leave a scalar destination untouched and leave the stream
+--      terminal; every `writer canonical` record is reproduced byte for byte;
+--   2. the string length fit check at its boundary
+--      (TestStringLengthValidatedBeforeNarrowing);
+--   3. the writer refuses what a reader refuses, for the same reason, in the
+--      same order (TestStringWriterRefusesWhatReadersRefuse);
+--   4. a wire-claimed length is checked against the bytes left before
+--      anything that size is allocated (TestStringClaimCheckedBeforeAllocation).
 
 local serialize = require("./serialize")
 local inputs = require("./inputs")
@@ -31,14 +34,6 @@ local function hexBytes(text: string): { number }
 	end
 	for pair in string.gmatch(text, "%x%x") do
 		out[#out + 1] = tonumber(pair, 16) :: number
-	end
-	return out
-end
-
-local function hexUnits(text: string): { number }
-	local out = {}
-	for unit in string.gmatch(text, "%x+") do
-		out[#out + 1] = tonumber(unit, 16) :: number
 	end
 	return out
 end
@@ -83,27 +78,6 @@ local function stringFromBytes(bytes: { number }): string
 	return buffer.tostring(bufferFromBytes(bytes))
 end
 
--- unitsToString recombines a UTF-16 code unit sequence into a Luau string
--- (astral code points become one UTF-8 sequence).
-local function unitsToString(units: { number }): string
-	local parts = {}
-	local i = 1
-	while i <= #units do
-		local unit = units[i]
-		if unit >= 0xD800 and unit <= 0xDBFF then
-			local low = units[i + 1]
-			check(low ~= nil and low >= 0xDC00 and low <= 0xDFFF, "test fixture has an unpaired high surrogate")
-			local cp = 0x10000 + (unit - 0xD800) * 0x400 + (low - 0xDC00)
-			parts[#parts + 1] = utf8.char(cp)
-			i += 2
-		else
-			parts[#parts + 1] = utf8.char(unit)
-			i += 1
-		end
-	end
-	return table.concat(parts)
-end
-
 -- Records (STANDARD.md, The vector format).
 local function parseRecords(text: string): { any }
 	local records = {}
@@ -126,8 +100,10 @@ local function parseRecords(text: string): { any }
 			elseif key == "bytes" then
 				rec.bytes = rest
 			elseif key == "expect" then
-				if rest == "refused" then
+				local reason = string.match(rest, "^refused (%S+)$")
+				if reason ~= nil then
 					rec.expect_kind = "refused"
+					rec.reason = reason
 				else
 					local kind, value = string.match(rest, "^(%S+)%s*=%s*(.*)$")
 					check(kind ~= nil, "bad expect line: " .. line)
@@ -210,15 +186,11 @@ local function runRecord(rec: any)
 			local bufferSize = tonumber(rec.params.buffer_size) :: number
 			destination = { value = "UNTOUCHED" }
 			ok = read:serializeString(destination, bufferSize)
-		elseif op == "wstring" then
-			local bufferSize = tonumber(rec.params.buffer_size) :: number
-			destination = { value = "UNTOUCHED" }
-			ok = read:serializeWideString(destination, bufferSize)
 		else
 			error("unknown operation " .. op .. " in " .. rec.name)
 		end
 		check(not ok, rec.name .. ": a refused vector was accepted")
-		check(read:error() ~= nil, rec.name .. ": a refusal latched no error")
+		check(errorIs(read, rec.reason), rec.name .. ": refused for " .. tostring(read:error()) .. ", the vector states " .. tostring(rec.reason))
 		if op ~= "bytes" then
 			check(destination.value == "UNTOUCHED", rec.name .. ": a refusal wrote its destination")
 		end
@@ -250,21 +222,14 @@ local function runRecord(rec: any)
 		local holder = { value = "UNTOUCHED" }
 		ok = read:serializeString(holder, bufferSize)
 		got = holder.value
-	elseif op == "wstring" then
-		local bufferSize = tonumber(rec.params.buffer_size) :: number
-		local holder = { value = "UNTOUCHED" }
-		ok = read:serializeWideString(holder, bufferSize)
-		got = holder.value
 	else
 		error("unknown operation " .. op .. " in " .. rec.name)
 	end
 	check(ok, rec.name .. ": an accepted vector was refused (" .. tostring(read:error()) .. ")")
 	if op == "bytes" then
 		check(sameBytes(got, hexBytes(rec.expect_text)), rec.name .. ": decoded bytes differ")
-	elseif op == "string" then
-		check(got == stringFromBytes(hexBytes(rec.expect_text)), rec.name .. ": decoded string differs")
 	else
-		check(got == unitsToString(hexUnits(rec.expect_text)), rec.name .. ": decoded wide string differs")
+		check(got == stringFromBytes(hexBytes(rec.expect_text)), rec.name .. ": decoded string differs")
 	end
 	local consumed = read:bitsProcessed()
 	check(consumed == rec.consumed, rec.name .. ": consumed " .. consumed .. " bits, want " .. tostring(rec.consumed))
@@ -284,12 +249,9 @@ local function runRecord(rec: any)
 		local wok: boolean
 		if op == "bytes" then
 			wok = write:serializeBytes(bufferFromBytes(hexBytes(rec.expect_text)))
-		elseif op == "string" then
-			local bufferSize = tonumber(rec.params.buffer_size) :: number
-			wok = write:serializeString({ value = stringFromBytes(hexBytes(rec.expect_text)) }, bufferSize)
 		else
 			local bufferSize = tonumber(rec.params.buffer_size) :: number
-			wok = write:serializeWideString({ value = unitsToString(hexUnits(rec.expect_text)) }, bufferSize)
+			wok = write:serializeString({ value = stringFromBytes(hexBytes(rec.expect_text)) }, bufferSize)
 		end
 		check(wok, rec.name .. ": the canonical write was refused (" .. tostring(write:error()) .. ")")
 		write:flush()
@@ -301,7 +263,7 @@ local function runRecord(rec: any)
 end
 
 function T.TestSerializeStrings()
-	local files = { "bytes", "string", "wstring" }
+	local files = { "bytes", "string" }
 	local total = 0
 	for _, file in ipairs(files) do
 		local text = (inputs :: any)[file]
@@ -320,45 +282,7 @@ function T.TestSerializeStrings()
 	print(string.format("strings: %d records", total))
 end
 
-function T.TestSerializeWideStringFamilyPin()
-	-- the family's pinned bytes: length 3 in a 3 bit field, then 0xD83D,
-	-- 0xDE00, 0x0041 as 32 bit groups — 99 bits, 13 bytes.
-	local pinned = {
-		0xEB, 0xC1, 0x06, 0x00, 0x00, 0xF0, 0x06, 0x00, 0x08, 0x02, 0x00, 0x00, 0x00,
-	}
-	local value = utf8.char(0x1F600) .. "A"
-
-	-- the wire spelled with raw bit operations must reproduce the pin.
-	local raw = buffer.create(64)
-	buffer.writebits(raw, 0, 3, 3)
-	local bit = 3
-	for _, group in ipairs({ 0xD83D, 0xDE00, 0x0041 }) do
-		buffer.writebits(raw, bit, 32, group)
-		bit += 32
-	end
-	local rawBytes = {}
-	for i = 0, #pinned - 1 do
-		rawBytes[#rawBytes + 1] = buffer.readu8(raw, i)
-	end
-	check(sameBytes(rawBytes, pinned), "raw bit operations disagree with the pinned bytes")
-
-	local write = serialize.WriteStream.new(buffer.create(64))
-	check(write:serializeWideString({ value = value }, 8), "family pin write refused")
-	check(write:bitsProcessed() == 3 + 3 * 32, "family pin has the wrong bit count")
-	write:flush()
-	check(sameBytes(bufferToBytes(write:data()), pinned), "family pin write bytes differ")
-
-	local measure = serialize.MeasureStream.new()
-	check(measure:serializeWideString({ value = value }, 8), "family pin measure refused")
-	check(measure:bitsProcessed() == write:bitsProcessed(), "family pin measure disagrees with write")
-
-	local read = serialize.ReadStream.new(bufferFromBytes(pinned))
-	local holder = { value = "" }
-	check(read:serializeWideString(holder, 8), "family pin read refused")
-	check(holder.value == value, "family pin read did not recombine the surrogate pair")
-end
-
-function T.TestWideStringLengthValidatedBeforeNarrowing()
+function T.TestStringLengthValidatedBeforeNarrowing()
 	-- The fit check is length < bufferSize at the caller's own width, before
 	-- the length field is formed. Each out of range case carries its negative
 	-- control, a length one step inside the buffer.
@@ -367,32 +291,80 @@ function T.TestWideStringLengthValidatedBeforeNarrowing()
 	local over = string.rep("a", bufferSize)
 
 	local write = serialize.WriteStream.new(buffer.create(256))
-	check(write:serializeWideString({ value = fits }, bufferSize),
+	check(write:serializeString({ value = fits }, bufferSize),
 		"a length of " .. (bufferSize - 1) .. " must fit a buffer of " .. bufferSize)
-	check(write:serializeWideString({ value = over }, bufferSize) == false,
+	check(write:serializeString({ value = over }, bufferSize) == false,
 		"a length of " .. bufferSize .. " must not fit a buffer of " .. bufferSize)
 	check(errorIs(write, serialize.SerializeError.ValueOutOfRange),
 		"the over-length latch is not ValueOutOfRange")
 
 	local measure = serialize.MeasureStream.new()
-	check(measure:serializeWideString({ value = fits }, bufferSize), "the fitting measure was refused")
-	check(measure:serializeWideString({ value = over }, bufferSize) == false,
+	check(measure:serializeString({ value = fits }, bufferSize), "the fitting measure was refused")
+	check(measure:serializeString({ value = over }, bufferSize) == false,
 		"the over-length measure was accepted")
 	check(errorIs(measure, serialize.SerializeError.ValueOutOfRange),
 		"the measure latch is not ValueOutOfRange")
 
 	-- bufferSize itself has serialize.go's panicBufferSize domain, which is
-	-- what makes the 32-bit length field total; the Go test's 2^32+5 lengths
-	-- cannot be materialized as a Luau string, and this port forms no narrower
-	-- integer before the fit comparison (the length is a double throughout).
+	-- what makes the 32-bit length field total.
 	local ok = pcall(function()
-		serialize.WriteStream.new(buffer.create(64)):serializeWideString({ value = "" }, 2 ^ 31)
+		serialize.WriteStream.new(buffer.create(64)):serializeString({ value = "" }, 2 ^ 31)
 	end)
 	check(not ok, "bufferSize 2^31 was accepted")
 	local ok0 = pcall(function()
-		serialize.WriteStream.new(buffer.create(64)):serializeWideString({ value = "" }, 0)
+		serialize.WriteStream.new(buffer.create(64)):serializeString({ value = "" }, 0)
 	end)
 	check(not ok0, "bufferSize 0 was accepted")
+end
+
+function T.TestStringWriterRefusesWhatReadersRefuse()
+	-- A writer is handed well-formed UTF-8 with no zero byte (STANDARD.md
+	-- string). Handed anything else it refuses for the reason a reader would
+	-- give the same payload, NUL first, and writes nothing.
+	local cases = {
+		{ "a\0b", serialize.SerializeError.EmbeddedNul },
+		{ "\0", serialize.SerializeError.EmbeddedNul },
+		{ "\xFF\0", serialize.SerializeError.EmbeddedNul },
+		{ "\xFF", serialize.SerializeError.InvalidUtf8 },
+		{ "\xC0\xAF", serialize.SerializeError.InvalidUtf8 },
+		{ "\xED\xA0\x80", serialize.SerializeError.InvalidUtf8 },
+		{ "\xE2\x82", serialize.SerializeError.InvalidUtf8 },
+	}
+	for i, case in cases do
+		local write = serialize.WriteStream.new(buffer.create(64))
+		check(write:serializeString({ value = case[1] }, 64) == false, "writer case " .. i .. " was written")
+		check(errorIs(write, case[2]), "writer case " .. i .. " refused for " .. tostring(write:error()) .. ", want " .. case[2])
+		check(write:bitsProcessed() == 0, "writer case " .. i .. " wrote bits")
+	end
+	-- Real text in every script travels: the writer accepts it and the reader
+	-- hands back exactly the bytes, with no normalization.
+	local text = "e\u{301} \u{E9} \u{56F2}\u{7881} \u{BC14}\u{B451} \u{627}\u{644} \u{FEFF}\u{FFFF} \u{1F600} \u{20000} \u{10FFFF}"
+	local write = serialize.WriteStream.new(buffer.create(128))
+	check(write:serializeString({ value = text }, 128), "real text was refused by the writer")
+	write:flush()
+	local read = serialize.ReadStream.new(write:data())
+	local holder = { value = "" }
+	check(read:serializeString(holder, 128), "real text was refused by the reader")
+	check(holder.value == text, "real text did not round trip byte for byte")
+end
+
+function T.TestStringClaimCheckedBeforeAllocation()
+	-- A wire-claimed length is checked against the bytes left BEFORE anything
+	-- the size of the claim is allocated: a 4-byte stream claiming 2^31 - 2
+	-- bytes under the largest buffer size is refused as past_end, never a
+	-- raise from allocating the claim (a Luau buffer that large cannot be
+	-- created at all, so allocating first raises here).
+	local b = buffer.create(4)
+	buffer.writeu32(b, 0, 0x7FFFFFFE)
+	local read = serialize.ReadStream.new(b)
+	local holder = { value = "UNTOUCHED" }
+	local ok, result = pcall(function()
+		return read:serializeString(holder, 0x7FFFFFFF)
+	end)
+	check(ok, "a huge claimed length raised: " .. tostring(result))
+	check(result == false, "a huge claimed length was accepted")
+	check(errorIs(read, serialize.SerializeError.PastEnd), "a huge claimed length refused for " .. tostring(read:error()))
+	check(holder.value == "UNTOUCHED", "a huge claimed length wrote its destination")
 end
 
 return T

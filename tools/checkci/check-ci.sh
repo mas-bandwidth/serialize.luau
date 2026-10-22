@@ -4,8 +4,8 @@
 #
 # Reads .github/workflows/ci.yml and DESIGN.md only; no network. It fails,
 # naming the line, when ci.yml spells an interpreter URL or sha256 (the pin
-# lives once, in the Makefile), when the workflow does not run `make dist-luau`
-# and `make test`, when a job lacks the fork guard, or when its corpus tag
+# lives once, in the Makefile), when the workflow does not run `make dist-luau`,
+# `make test` and `make controls`, when a job lacks the fork guard, or when its corpus tag
 # differs from DESIGN.md's pin. Its controls are scratch copies of ci.yml, one
 # with a pasted sha256 and one without the fork guard: each must fail its scan,
 # or this test fails.
@@ -67,7 +67,7 @@ EOF
 	gap=$(guard_gap "$ci")
 	[ -n "$gap" ] && fail "$gap"
 
-	for target in dist-luau test; do
+	for target in dist-luau test controls; do
 		runs_make "$target" || fail "$ci: ci.yml does not run 'make $target'"
 	done
 

@@ -5,7 +5,8 @@
 -- compares the driver's output against serialize.go's. Each program is a
 -- sequence of steps; the driver writes it, reports the bytes, reads them back
 -- and (when the program is mutated) reads a mutated copy, printing results as
--- lowercase hex lines for the Go side to compare.
+-- lowercase hex lines for the Go side to compare. Every read ends with
+-- serializeEnd (Z when accepted), and a refusal is E: and its reason.
 
 local S = require("./serialize")
 local FLT = require("./serialize_float")
@@ -132,7 +133,7 @@ local function parseProgram(lines)
 		if op == "b" or op == "b64" then
 			st.bits = words[#words]
 		end
-		if op == "s" or op == "ws" then
+		if op == "s" then
 			st.bufsize = words[1]
 			st.hex = tokens[3]
 		end
@@ -190,8 +191,6 @@ local function writeProgram(prog)
 			ws:serializeBytes(hexToBuf(st.hex))
 		elseif op == "s" then
 			ws:serializeString({ value = hexToStr(st.hex) }, st.bufsize)
-		elseif op == "ws" then
-			ws:serializeWideString({ value = hexToStr(st.hex) }, st.bufsize)
 		elseif op == "al" then
 			ws:serializeAlign()
 		elseif op == "ob" then
@@ -207,6 +206,7 @@ local function writeProgram(prog)
 			break
 		end
 	end
+	ws:serializeEnd()
 	ws:flush()
 	local data = ws:data()
 	if ws:ok() then
@@ -300,10 +300,6 @@ local function readProgram(prog, data)
 			local h = { value = "" }
 			ok = rs:serializeString(h, st.bufsize)
 			tok = "S" .. strToHex(h.value)
-		elseif op == "ws" then
-			local h = { value = "" }
-			ok = rs:serializeWideString(h, st.bufsize)
-			tok = "W" .. strToHex(h.value)
 		elseif op == "al" then
 			ok = rs:serializeAlign()
 			tok = "A"
@@ -324,10 +320,15 @@ local function readProgram(prog, data)
 			tok = "O" .. (bv and "t" or "f") .. ":" .. tostring(nv)
 		end
 		if not ok then
-			toks[#toks + 1] = "E"
-			break
+			toks[#toks + 1] = "E:" .. tostring(rs:error())
+			return table.concat(toks, " ")
 		end
 		toks[#toks + 1] = tok
+	end
+	if rs:serializeEnd() then
+		toks[#toks + 1] = "Z"
+	else
+		toks[#toks + 1] = "E:" .. tostring(rs:error())
 	end
 	return table.concat(toks, " ")
 end
