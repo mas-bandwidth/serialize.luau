@@ -5,9 +5,10 @@
 # Reads .github/workflows/ci.yml and DESIGN.md only; no network. It fails,
 # naming the line, when ci.yml spells an interpreter URL or sha256 (the pin
 # lives once, in the Makefile), when the workflow does not run `make dist-luau`
-# and `make test`, or when its corpus tag differs from DESIGN.md's pin. Its own
-# control is a scratch copy of ci.yml with a pasted sha256: that copy must fail
-# the pin scan, or this test fails.
+# and `make test`, when a job lacks the fork guard, or when its corpus tag
+# differs from DESIGN.md's pin. Its controls are scratch copies of ci.yml, one
+# with a pasted sha256 and one without the fork guard: each must fail its scan,
+# or this test fails.
 set -u
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -36,6 +37,17 @@ runs_make() {
 		grep -vE '^[0-9]+:[[:space:]]*#' >/dev/null
 }
 
+# guard_gap FILE prints a line when FILE's jobs and fork guards differ in
+# count. The repository is PUBLIC and its runners are the fleet's, so every job
+# carries the same-repository `if:` and a fork's pull request never reaches them.
+guard_gap() {
+	jobs=$(grep -cE '^[[:space:]]*runs-on:' "$1" || true)
+	guards=$(grep -cE "^[[:space:]]*if:[[:space:]]*github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.head\.repo\.full_name == github\.repository[[:space:]]*$" "$1" || true)
+	if [ "$jobs" -ne "$guards" ]; then
+		printf '%s:1: %s job(s) but %s fork guard(s); every job needs the same-repository if:\n' "$1" "$jobs" "$guards"
+	fi
+}
+
 # a_tag LINE extracts the first vX.Y.Z from a FILE:LINE record, or empty.
 a_tag() {
 	printf '%s\n' "$1" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1
@@ -51,6 +63,9 @@ else
 	done <<EOF
 $(scan_pin "$ci")
 EOF
+
+	gap=$(guard_gap "$ci")
+	[ -n "$gap" ] && fail "$gap"
 
 	for target in dist-luau test; do
 		runs_make "$target" || fail "$ci: ci.yml does not run 'make $target'"
@@ -80,6 +95,13 @@ EOF
 			printf 'control: the scratch ci.yml fails as required:\n%s\n' "$ctl_out"
 		else
 			fail "control: a scratch ci.yml with a pasted sha256 passed the pin scan; it must fail"
+		fi
+		grep -v 'head.repo.full_name == github.repository' "$ci" >"$ctl/ci-fork.yml"
+		fork_out=$(guard_gap "$ctl/ci-fork.yml")
+		if [ -n "$fork_out" ]; then
+			printf 'control: the scratch ci.yml without the fork guard fails as required:\n%s\n' "$fork_out"
+		else
+			fail "control: a scratch ci.yml without the fork guard passed the guard scan; it must fail"
 		fi
 		rm -r "$ctl"
 	fi

@@ -4,17 +4,24 @@ on:
   push:
     branches: [main, sprint/serialize-luau]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
     name: test on the pinned Luau
-    runs-on: ubuntu-24.04
+    # THE FORK GUARD: this repository is PUBLIC and these are its own fleet runners, so a
+    # pull request from a fork never reaches them (tools/checkci/check-ci.sh holds every job to it).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
     steps:
       - uses: actions/checkout@v4
 
       # The pin -- URL and sha256 -- lives once, in the Makefile. The cache key
       # is derived from that one pin here rather than repeated; make dist-luau
       # refuses any archive whose sha256 is not the pin, before it unpacks it.
+      - name: Check CI workflow invariants
+        run: make check-ci
+
       - name: Read the interpreter pin from the Makefile
         id: pin
         run: |
@@ -48,7 +55,10 @@ jobs:
 
   corpus:
     name: STANDARD.md and conformance/ match the corpus pin
-    runs-on: ubuntu-24.04
+    # THE FORK GUARD: this repository is PUBLIC and these are its own fleet runners, so a
+    # pull request from a fork never reaches them (tools/checkci/check-ci.sh holds every job to it).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
       SERIALIZE_TAG: v1.17.0
     steps:
