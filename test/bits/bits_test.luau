@@ -12,6 +12,13 @@ local serialize = require("./serialize")
 
 local T = {}
 
+-- The closed list of refusal reasons (STANDARD.md, Refusal reasons), as the
+-- library spells them; test/smoke pins each spelling.
+local REASONS: { [string]: boolean } = {}
+for _, reason in serialize.SerializeError do
+	REASONS[reason] = true
+end
+
 local function fail(what: string)
 	error("TestSerializeBits: " .. what, 3)
 end
@@ -78,8 +85,12 @@ local function parseVecFile(text: string): { any }
 			end
 			v = trimmed:match("^expect (.*)$")
 			if v ~= nil then
-				if v == "refused" then
-					cur.expect = { refused = true }
+				local reason = v:match("^refused (%S+)$")
+				if reason ~= nil then
+					if not REASONS[reason] then
+						fail("unknown refusal reason in " .. cur.name .. ": " .. v)
+					end
+					cur.expect = { refused = true, reason = reason }
 				else
 					local want = v:match("^value = (.*)$")
 					if want == nil then
@@ -265,9 +276,6 @@ local function runAlign(r: any, rec: any)
 		if r:serializeAlign() then
 			fail("align refused read succeeded: " .. rec.name)
 		end
-		if r:error() ~= serialize.SerializeError.Align then
-			fail("align refusal is not the Align error: " .. rec.name)
-		end
 		checkTerminal(r)
 		return
 	end
@@ -313,6 +321,9 @@ local function runFile(name: string)
 			runAlign(r, rec)
 		else
 			fail(name .. ".txt: unexpected operation " .. rec.op)
+		end
+		if rec.expect.refused and r:error() ~= rec.expect.reason then
+			fail(rec.name .. ": refused for " .. tostring(r:error()) .. ", the vector states " .. rec.expect.reason)
 		end
 	end
 	print(name .. ".txt: " .. #records .. " records")

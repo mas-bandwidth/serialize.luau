@@ -41,6 +41,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Negative controls
+        run: make controls
+
       # A later card adds fuzz/go.mod; until then there is nothing to fuzz and
       # no Go toolchain is installed.
       - name: Set up Go for the fuzzers
@@ -54,23 +57,25 @@ jobs:
         run: make fuzz
 
   corpus:
-    name: STANDARD.md and conformance/ match the corpus pin
+    name: the standard and the corpus match the corpus pin
     # THE FORK GUARD: this repository is PUBLIC and these are its own fleet runners, so a
     # pull request from a fork never reaches them (tools/checkci/check-ci.sh holds every job to it).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
-      SERIALIZE_TAG: v1.17.0
+      SERIALIZE_TAG: v2.0.0
     steps:
       - uses: actions/checkout@v4
 
-      # STANDARD.md and conformance/ are VERBATIM vendored copies (DESIGN.md,
-      # "The vendored standard"). They must be the pinned release's own bytes;
-      # a divergence is red, never a skip.
+      # STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ are
+      # VERBATIM vendored copies (DESIGN.md, "The vendored standard"). They must
+      # be the pinned release's own bytes; a divergence is red, never a skip.
       - name: Check out the reference at the corpus pin
         run: git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git "$RUNNER_TEMP/serialize"
 
       - name: The vendored corpus and standard are the pin's
         run: |
           diff -ru "$RUNNER_TEMP/serialize/conformance" conformance
-          diff -ru "$RUNNER_TEMP/serialize/STANDARD.md" STANDARD.md
+          diff -ru "$RUNNER_TEMP/serialize/conformance-controls" conformance-controls
+          diff -u "$RUNNER_TEMP/serialize/STANDARD.md" STANDARD.md
+          diff -u "$RUNNER_TEMP/serialize/IMPLEMENTING.md" IMPLEMENTING.md

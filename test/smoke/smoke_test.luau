@@ -26,8 +26,8 @@ local METHODS = {
 	"serializeUint8", "serializeUint16", "serializeUint32", "serializeUint64",
 	"serializeBool", "serializeFloat", "serializeDouble",
 	"serializeCompressedFloat", "serializeCompressedFloatPrecomputed",
-	"serializeBytes", "serializeString", "serializeWideString",
-	"serializeAlign", "serializeObject", "serializeIntRelative",
+	"serializeBytes", "serializeString",
+	"serializeAlign", "serializeEnd", "serializeObject", "serializeIntRelative",
 	"alignBits", "bitsProcessed", "bytesProcessed",
 	"setContext", "context",
 }
@@ -61,10 +61,26 @@ function T.TestSmoke()
 	for _, name in ENTRY do
 		check(serialize[name] ~= nil, "entry name " .. name .. " exists")
 	end
-	check(serialize.FORMAT_VERSION == "1.1", "format version 1.1")
-	check(serialize.SerializeError.Overflow == "overflow", "SerializeError.Overflow")
-	check(serialize.SerializeError.ValueOutOfRange == "value_out_of_range", "SerializeError.ValueOutOfRange")
-	check(serialize.SerializeError.Align == "align", "SerializeError.Align")
+	check(serialize.FORMAT_VERSION == "2.0", "format version 2.0")
+	-- The closed list of refusal reasons, spelled exactly as STANDARD.md,
+	-- Refusal reasons spells them, and nothing else.
+	local REASONS = {
+		PastEnd = "past_end",
+		ValueOutOfRange = "value_out_of_range",
+		NonzeroPadding = "nonzero_padding",
+		TrailingData = "trailing_data",
+		NonFiniteFloat = "non_finite_float",
+		InvalidUtf8 = "invalid_utf8",
+		EmbeddedNul = "embedded_nul",
+		NonCanonical = "non_canonical",
+	}
+	local listed = 0
+	for key, value in serialize.SerializeError do
+		check(REASONS[key] == value, "SerializeError." .. tostring(key) .. " is " .. tostring(value) .. ", not a reason the standard lists")
+		listed += 1
+	end
+	check(listed == 8, "SerializeError lists the eight reasons, and no others")
+	check(serialize.WriteStream.serializeWideString == nil, "wstring is gone (format 2.0)")
 
 	local w = serialize.WriteStream.new(buffer.create(16))
 	local r = serialize.ReadStream.new(buffer.create(0))
@@ -108,7 +124,7 @@ function T.TestSmoke()
 	local b = { value = true }
 	check(r:serializeBool(b) == false, "a bool read past the end fails")
 	check(b.value == true, "the refused read leaves its holder unchanged")
-	check(r:error() == serialize.SerializeError.Overflow, "the failure latches overflow")
+	check(r:error() == serialize.SerializeError.PastEnd, "the failure latches past_end")
 	check(not r:ok(), "ok is false once latched")
 	local u = { value = 7 }
 	check(r:serializeUint32(u) == false, "a later read fails")
@@ -121,8 +137,18 @@ function T.TestSmoke()
 	check(serialize.Continue(r, more) == false and more.value == true, "Continue stops on a latched stream")
 	local done = { value = false }
 	check(serialize.Until(r, done) == false and done.value == false, "Until stops on a latched stream")
-	check(r:error() == serialize.SerializeError.Overflow, "the first error sticks")
+	check(r:serializeEnd() == false, "an end fails once latched")
+	check(r:error() == serialize.SerializeError.PastEnd, "the first reason sticks")
 	check(r:bitsProcessed() == 0 and r:bytesProcessed() == 0, "nothing was consumed")
+	-- The FIRST reason sticks through an object: the object's inner read
+	-- refuses with its own reason, and the object's own failure is an echo
+	-- that keeps it.
+	local o = serialize.ReadStream.new(buffer.create(1))
+	check(o:serializeBits({ value = 0 }, 8), "the object's stream holds one byte")
+	check(o:serializeObject({ serialize = function(_, stream): boolean
+		return stream:serializeBool({ value = false })
+	end }) == false, "an object whose read runs past the end refuses")
+	check(o:error() == serialize.SerializeError.PastEnd, "the object's failure keeps the inner reason, not " .. tostring(o:error()))
 	-- Reset clears the latch; the context is kept.
 	r:setContext("ctx")
 	r:reset(buffer.create(0))

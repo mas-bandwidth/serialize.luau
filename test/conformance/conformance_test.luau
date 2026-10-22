@@ -4,9 +4,22 @@
 -- the cross-language instrument over every conformance/*.txt. It discovers
 -- the directory (the runner plants each file as a string in inputs.luau),
 -- never a fixed list, and fails unless every record ran.
+--
+-- Every record runs on its own; a record that fails is collected by name,
+-- never stops the run. A refused record must refuse for the reason it states
+-- (STANDARD.md, Refusal reasons: the stream's FIRST refusal), leave its
+-- scalar destination unwritten and leave the stream terminal.
+--
+-- control.luau (planted by tools/luaurun) names the run. In the ordinary run
+-- its name is empty and no record may fail. In a NEGATIVE CONTROL run
+-- (STANDARD.md, "A gate nobody has seen go red"; tools/controls/controls.tsv)
+-- the unit's source has one refusal rule deleted, or the corpus has
+-- conformance-controls/unknown-operation.txt added, and the records that fail
+-- must be EXACTLY the control's conformance-controls/<name>.expected list.
 
 local serialize = require("./serialize")
 local inputs = require("./inputs")
+local control = require("./control")
 
 local T = {}
 
@@ -19,6 +32,20 @@ local function check(cond: any, what: string)
 		fail(what)
 	end
 end
+
+-- The closed list of refusal reasons, spelled as STANDARD.md, Refusal reasons
+-- spells them. A refused record that states no reason, or a reason not in
+-- this list, is a malformed vector, and the run is red.
+local REASONS: { [string]: boolean } = {
+	past_end = true,
+	value_out_of_range = true,
+	nonzero_padding = true,
+	trailing_data = true,
+	non_finite_float = true,
+	invalid_utf8 = true,
+	embedded_nul = true,
+	non_canonical = true,
+}
 
 local function countOps(text: string): number
 	local n = 0
@@ -68,7 +95,7 @@ local function parseVecFile(text: string): { any }
 			if op == nil then
 				fail("vector line before a record: " .. trimmed)
 			end
-			cur = { op = op, name = "", params = {}, bytes = {}, expect = nil, consumed = nil, writer = false, measure = nil, steps = {} }
+			cur = { op = op, name = "", params = {}, bytes = {}, expect = nil, consumed = nil, writer = false, writerInput = nil, measure = nil, steps = {} }
 		else
 			local v = trimmed:match("^name (.+)$")
 			if v ~= nil then cur.name = v end
@@ -86,8 +113,12 @@ local function parseVecFile(text: string): { any }
 			end
 			v = trimmed:match("^expect (.*)$")
 			if v ~= nil then
-				if v == "refused" then
-					cur.expect = { refused = true }
+				if v:match("^refused") then
+					local reason = v:match("^refused (%S+)$")
+					if reason == nil or not REASONS[reason] then
+						fail("malformed vector " .. cur.name .. ": expect " .. v .. " states no reason from the closed list")
+					end
+					cur.expect = { refused = true, reason = reason }
 				else
 					local bits = v:match("^bits = (0x%x+)$")
 					if bits ~= nil then
@@ -105,6 +136,14 @@ local function parseVecFile(text: string): { any }
 			v = trimmed:match("^consumed (%-?%d+)$")
 			if v ~= nil then cur.consumed = tonumber(v) end
 			if trimmed == "writer canonical" then cur.writer = true end
+			v = trimmed:match("^writer_input (.*)$")
+			if v ~= nil then
+				local bits = v:match("^bits = (0x%x+)$")
+				if bits == nil then
+					fail("malformed vector " .. cur.name .. ": writer_input " .. v)
+				end
+				cur.writerInput = bits
+			end
 			v = trimmed:match("^measure_at_least (%d+)$")
 			if v ~= nil then cur.measure = tonumber(v) end
 		end
@@ -293,7 +332,6 @@ local function runAlign(r: any, rec: any)
 	end
 	if rec.expect.refused then
 		check(not r:serializeAlign(), rec.name .. ": align refused read succeeded")
-		check(r:error() == serialize.SerializeError.Align, rec.name .. ": align refusal is not Align")
 		checkTerminal(r, "bits", {})
 		return
 	end
@@ -386,7 +424,7 @@ local function runFloat(r: any, rec: any)
 	if rec.expect.refused then
 		local h = { value = 12345.0 }
 		check(not r:serializeFloat(h), rec.name .. ": float refused read succeeded")
-		check(r:error() == serialize.SerializeError.Overflow, rec.name .. ": float refusal is not Overflow")
+		check(h.value == 12345.0, rec.name .. ": a refused float read wrote its destination")
 		local h2 = { value = 12345.0 }
 		check(not r:serializeFloat(h2), rec.name .. ": float stream not terminal")
 		return
@@ -422,7 +460,7 @@ local function runDouble(r: any, rec: any)
 	if rec.expect.refused then
 		local h = { value = 12345.0 }
 		check(not r:serializeDouble(h), rec.name .. ": double refused read succeeded")
-		check(r:error() == serialize.SerializeError.Overflow, rec.name .. ": double refusal is not Overflow")
+		check(h.value == 12345.0, rec.name .. ": a refused double read wrote its destination")
 		local h2 = { value = 12345.0 }
 		check(not r:serializeDouble(h2), rec.name .. ": double stream not terminal")
 		return
@@ -509,54 +547,6 @@ local function runString(r: any, rec: any)
 		check(w:serializeString({ value = want }, bufferSize), rec.name .. ": string write refused")
 		w:flush()
 		check(sameBytes(rec.bytes, w:data()), rec.name .. ": string writer bytes mismatch")
-	end
-end
-
-local function unitsToString(units: { number }): string
-	local parts = {}
-	local i = 1
-	while i <= #units do
-		local unit = units[i]
-		if unit >= 0xD800 and unit <= 0xDBFF then
-			local low = units[i + 1] :: number
-			local cp = 0x10000 + (unit - 0xD800) * 0x400 + (low - 0xDC00)
-			parts[#parts + 1] = utf8.char(cp)
-			i += 2
-		else
-			parts[#parts + 1] = utf8.char(unit)
-			i += 1
-		end
-	end
-	return table.concat(parts)
-end
-
-local function runWstring(r: any, rec: any)
-	local bufferSize = tonumber(rec.params.buffer_size) :: number
-	skipBits(r, tonumber(rec.params.preceding_bits or "0") :: number)
-	local h = { value = "UNTOUCHED" }
-	local ok = r:serializeWideString(h, bufferSize)
-	if rec.expect.refused then
-		check(not ok, rec.name .. ": wstring refused read succeeded")
-		check(h.value == "UNTOUCHED", rec.name .. ": wstring refusal wrote its destination")
-		check(r:error() ~= nil, rec.name .. ": wstring refusal latched no error")
-		local probe = buffer.create(1)
-		buffer.writeu8(probe, 0, 0x5A)
-		check(not r:serializeBytes(probe), rec.name .. ": wstring stream not terminal")
-		return
-	end
-	local units = {}
-	for u in rec.expect.value:gmatch("%x+") do
-		units[#units + 1] = tonumber(u, 16) :: number
-	end
-	local want = unitsToString(units)
-	check(ok, rec.name .. ": wstring accepted read refused")
-	check(h.value == want, rec.name .. ": wstring decoded differs")
-	check(r:bitsProcessed() == rec.consumed, rec.name .. ": wstring consumed")
-	if rec.writer then
-		local w = newWrite(rec)
-		check(w:serializeWideString({ value = want }, bufferSize), rec.name .. ": wstring write refused")
-		w:flush()
-		check(sameBytes(rec.bytes, w:data()), rec.name .. ": wstring writer bytes mismatch")
 	end
 end
 
@@ -653,6 +643,42 @@ local function runCompressedFloat(r: any, rec: any)
 	local want = hexToBits32(rec.expect.value)
 	check(serialize._family("float").f32bits(h.value) == want, rec.name .. ": compressed_float read bits differ")
 	check(r:bitsProcessed() == rec.consumed, rec.name .. ": compressed_float consumed")
+	check(not rec.writer, rec.name .. ": compressed_float has no canonical writer value")
+end
+
+-- runWriterInput hands the writer the record's writer_input float32 and
+-- requires the record's bytes exactly (STANDARD.md, What a runner checks). It
+-- runs on any record that carries one, refused records included.
+local function runWriterInput(rec: any)
+	check(rec.op == "compressed_float", rec.name .. ": writer_input on " .. rec.op)
+	local w = serialize.WriteStream.new(buffer.create(16))
+	local value = serialize._family("float").f32frombits(hexToBits32(rec.writerInput))
+	check(w:serializeCompressedFloat({ value = value }, tonumber(rec.params.min), tonumber(rec.params.max), tonumber(rec.params.res)),
+		rec.name .. ": writer_input write refused (" .. tostring(w:error()) .. ")")
+	w:flush()
+	check(sameBytes(rec.bytes, w:data()), rec.name .. ": writer_input bytes mismatch")
+end
+
+-- runEnd is end alone (STANDARD.md end): an accepted end consumes the whole
+-- stream, a writer's end emits nothing and a measure's costs nothing.
+local function runEnd(r: any, rec: any)
+	if rec.expect.refused then
+		check(not r:serializeEnd(), rec.name .. ": end refused read succeeded")
+		checkTerminal(r, "bits", {})
+		return
+	end
+	check(rec.expect.value == "0", rec.name .. ": an end's value is 0")
+	check(r:serializeEnd(), rec.name .. ": accepted end refused (" .. tostring(r:error()) .. ")")
+	check(r:bitsProcessed() == rec.consumed, rec.name .. ": end consumed")
+	if rec.writer then
+		local w = serialize.WriteStream.new(buffer.create(8))
+		check(w:serializeEnd(), rec.name .. ": end write refused")
+		check(w:bitsProcessed() == 0, rec.name .. ": a writer's end wrote bits")
+		w:flush()
+		check(sameBytes(rec.bytes, w:data()), rec.name .. ": end writer bytes mismatch")
+		local m = serialize.MeasureStream.new()
+		check(m:serializeEnd() and m:bitsProcessed() == 0, rec.name .. ": a measure's end cost bits")
+	end
 end
 
 -- ---------------------------------------------------------------------------
@@ -684,6 +710,11 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		return ok
 	elseif op == "align" then
 		local ok = r:serializeAlign()
+		table.insert(out, { op = op, ok = ok, value = nil })
+		return ok
+	elseif op == "end" then
+		check(#st == 1, "the end step takes no parameters")
+		local ok = r:serializeEnd()
 		table.insert(out, { op = op, ok = ok, value = nil })
 		return ok
 	elseif op == "float" then
@@ -727,24 +758,6 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local ok = r:serializeString(h, n)
 		table.insert(out, { op = op, ok = ok, str = h.value })
 		if ok then st.decoded = h.value else check(h.value == base, "a refused string step wrote its destination") end
-		return ok
-	elseif op == "wstring" then
-		local n = tonumber(st[2]) :: number
-		local base = if dec ~= nil then dec else ""
-		local h = { value = base }
-		local ok = r:serializeWideString(h, n)
-		local units = {}
-		for _, u in utf8.codes(h.value) do
-			if u >= 0x10000 then
-				u = u - 0x10000
-				units[#units + 1] = 0xD800 + math.floor(u / 0x400)
-				units[#units + 1] = 0xDC00 + (u % 0x400)
-			else
-				units[#units + 1] = u
-			end
-		end
-		table.insert(out, { op = op, ok = ok, wunits = units })
-		if ok then st.decoded = h.value else check(h.value == base, "a refused wstring step wrote its destination") end
 		return ok
 	elseif op == "uint128" then
 		local base = if dec ~= nil then dec else Int128.new(0i, 0i)
@@ -918,19 +931,13 @@ local function checkSeqValue(rec: any, entry: any, want: string)
 		check(arraySame(entry.bytes, splitHex(want)), rec.name .. ": sequence bytes mismatch")
 	elseif op == "string" then
 		check(entry.str == buffer.tostring(bytesToBuffer(splitHex(want))), rec.name .. ": sequence string mismatch")
-	elseif op == "wstring" then
-		local wantUnits = {}
-		for u in want:gmatch("%x+") do
-			wantUnits[#wantUnits + 1] = tonumber(u, 16) :: number
-		end
-		check(arraySame(entry.wunits, wantUnits), rec.name .. ": sequence wstring mismatch")
 	elseif op == "fixed" then
 		if entry.i128 ~= nil then
 			check(Int128.cmp(parse128(want), entry.i128) == 0, rec.name .. ": sequence fixed128 value mismatch")
 		else
 			check(decToInt(want) == entry.value, rec.name .. ": sequence fixed64 value mismatch")
 		end
-	elseif op == "align" or op == "object" then
+	elseif op == "align" or op == "object" or op == "end" then
 		check(false, rec.name .. ": unexpected expect value for " .. op)
 	end
 end
@@ -989,8 +996,8 @@ local function runRecord(r: any, rec: any)
 		runBytes(r, rec)
 	elseif op == "string" then
 		runString(r, rec)
-	elseif op == "wstring" then
-		runWstring(r, rec)
+	elseif op == "end" then
+		runEnd(r, rec)
 	elseif op == "int_relative" then
 		runIntRelative(r, rec)
 	elseif op == "fixed" then
@@ -1002,9 +1009,20 @@ local function runRecord(r: any, rec: any)
 	else
 		fail("no runner for operation " .. op .. " in " .. rec.name)
 	end
+	if rec.expect.refused then
+		check(r:error() == rec.expect.reason,
+			rec.name .. ": refused for " .. tostring(r:error()) .. ", the vector states " .. rec.expect.reason)
+	end
+	if rec.writerInput ~= nil then
+		runWriterInput(rec)
+	end
 end
 
-local function runFile(name: string): number
+-- runFile runs every record of one corpus file, each on its own: a record
+-- that fails is recorded in failures (name -> what failed) and the run goes
+-- on. A name already seen anywhere in the corpus is malformed: names are
+-- unique across the corpus (STANDARD.md, The vector format).
+local function runFile(name: string, seen: { [string]: string }, failures: { [string]: string }): number
 	local text = (inputs :: any)[name]
 	check(type(text) == "string", "inputs." .. name .. " is missing")
 	local records = parseVecFile(text)
@@ -1012,8 +1030,14 @@ local function runFile(name: string): number
 	check(#records == expected, name .. ".txt: parsed " .. #records .. " records, the file has " .. expected)
 	check(#records > 0, name .. ".txt has no records")
 	for _, rec in records do
+		check(rec.name ~= "", name .. ".txt has a record with no name")
+		check(seen[rec.name] == nil, "vector name " .. rec.name .. " is in both " .. tostring(seen[rec.name]) .. ".txt and " .. name .. ".txt")
+		seen[rec.name] = name
 		local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
-		runRecord(r, rec)
+		local ok, err = pcall(runRecord, r, rec)
+		if not ok then
+			failures[rec.name] = tostring(err)
+		end
 	end
 	return #records
 end
@@ -1033,63 +1057,6 @@ local function testUnknownOperationControl()
 	check(raised, "an operation with no runner must be REJECTED, not skipped")
 end
 
--- testSabotagedReaderControl (STANDARD.md, "A gate nobody has seen go red"):
--- a reader with a refusal rule switched off — through a test-only hook on the
--- stream instance, not a source edit — must go red on exactly the vectors that
--- pin that rule. We disable the int out-of-range check: the refused int vectors
--- that pin it must now be accepted, and every accepted vector must still accept.
-local function testSabotagedReaderControl()
-	local text = (inputs :: any)["int"]
-	local records = parseVecFile(text)
-	local refused = {}
-	local accepted = {}
-	for _, rec in records do
-		if rec.op == "int" then
-			local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
-			local h = { value = 0 }
-			local ok = r:serializeInt(h, tonumber(rec.params.min), tonumber(rec.params.max))
-			if rec.expect.refused then
-				check(not ok, rec.name .. ": control expects refusal, real reader accepted")
-				table.insert(refused, rec)
-			else
-				check(ok, rec.name .. ": control expects accept, real reader refused")
-				table.insert(accepted, rec)
-			end
-		end
-	end
-	check(#refused > 0, "control found no refused int vector to pin")
-	local function sabotagedReadInt(self: any, holder: any, min: number, max: number): boolean
-		local bits = serialize._family("int").bitsRequired(min, max)
-		if self:_latched() then return false end
-		if self:_available() < bits then
-			return self:_fail(serialize.SerializeError.Overflow)
-		end
-		if bits == 0 then
-			holder.value = min
-			return true
-		end
-		local offset = self:_readBits(bits)
-		holder.value = offset + min
-		return true
-	end
-	local flipped = 0
-	for _, rec in refused do
-		local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
-		r.serializeInt = sabotagedReadInt
-		local h = { value = 0 }
-		if r:serializeInt(h, tonumber(rec.params.min), tonumber(rec.params.max)) then
-			flipped += 1
-		end
-	end
-	check(flipped > 0, "the sabotaged reader found nothing to break: no vector pins the int out-of-range rule")
-	for _, rec in accepted do
-		local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
-		r.serializeInt = sabotagedReadInt
-		local h = { value = 0 }
-		check(r:serializeInt(h, tonumber(rec.params.min), tonumber(rec.params.max)), rec.name .. ": sabotaged reader refused an accepted vector")
-	end
-end
-
 local function sortedInputNames(): { string }
 	local names = {}
 	for k in (inputs :: any) do
@@ -1099,18 +1066,72 @@ local function sortedInputNames(): { string }
 	return names
 end
 
+local function sortedKeys(set: { [string]: any }): { string }
+	local out = {}
+	for k in set do
+		table.insert(out, k)
+	end
+	table.sort(out)
+	return out
+end
+
+-- expectedSet parses a conformance-controls/<name>.expected list: one vector
+-- name per line, # comments and blank lines ignored.
+local function expectedSet(text: string): { [string]: boolean }
+	local out = {}
+	for _, line in ipairs(string.split(text, "\n")) do
+		local trimmed = line:gsub("^%s+", ""):gsub("%s+$", "")
+		if trimmed ~= "" and trimmed:sub(1, 1) ~= "#" then
+			out[trimmed] = true
+		end
+	end
+	return out
+end
+
 function T.TestConformanceCorpus()
 	local names = sortedInputNames()
 	check(#names > 0, "no conformance files discovered: an empty corpus is a failure, not a pass")
 	local total = 0
+	local seen: { [string]: string } = {}
+	local failures: { [string]: string } = {}
 	for _, f in names do
-		local n = runFile(f)
+		local n = runFile(f, seen, failures)
 		print(f .. ".txt: " .. n .. " records")
 		total += n
 	end
 	print("conformance total: " .. total .. " records")
-	testUnknownOperationControl()
-	testSabotagedReaderControl()
+	local failed = sortedKeys(failures)
+	if control.name == "" then
+		if #failed > 0 then
+			local lines = {}
+			for _, name in failed do
+				table.insert(lines, failures[name])
+			end
+			fail(#failed .. " of " .. total .. " vectors failed:\n" .. table.concat(lines, "\n"))
+		end
+		print("conformance: " .. total .. " of " .. total .. " vectors pass")
+		testUnknownOperationControl()
+		return
+	end
+	-- A NEGATIVE CONTROL run: the failures must be exactly the expected list.
+	local want = expectedSet(control.expected)
+	local wanted = sortedKeys(want)
+	check(#wanted > 0, "control " .. control.name .. ": the expected list is empty")
+	local wrong = {}
+	for _, name in failed do
+		if not want[name] then
+			table.insert(wrong, "  failed but not expected: " .. name .. " (" .. failures[name] .. ")")
+		end
+	end
+	for _, name in wanted do
+		if failures[name] == nil then
+			table.insert(wrong, "  expected but passed: " .. name)
+		end
+	end
+	if #wrong > 0 then
+		fail("control " .. control.name .. " did not fail exactly its expected list:\n" .. table.concat(wrong, "\n"))
+	end
+	print("control " .. control.name .. ": exactly the " .. #wanted .. " expected vectors failed")
 end
 
 return T

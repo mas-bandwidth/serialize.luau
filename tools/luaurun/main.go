@@ -10,8 +10,9 @@
 //	                           level above the unit (the loading-is-closed tests)
 //	build/run/<name>/src/      THE UNIT: a copy of src/*.luau, the .luau files
 //	                           of test/<name>/, inputs.luau (every
-//	                           conformance/*.txt as a string) and _luaurun.luau,
-//	                           the driver
+//	                           conformance/*.txt as a string), control.luau
+//	                           (the control this run is, empty here) and
+//	                           _luaurun.luau, the driver
 //
 // The driver requires each *_test.luau module (a table of functions), runs
 // every function named Test<Name> in sorted order and prints RUN Test<Name>,
@@ -22,6 +23,18 @@
 //
 // Usage: luaurun -root <repo> [name...]; no names runs every test/*/.
 // The interpreter is $LUAU, else <repo>/dist/luau-0.741/luau.
+//
+// THE NEGATIVE CONTROLS (STANDARD.md, "A gate nobody has seen go red"):
+// luaurun -root <repo> -controls runs every control of
+// tools/controls/controls.tsv. Each builds build/run/control-<name>/ as the
+// unit of test/conformance/ (its conformance_test.luau alone), with ONE
+// refusal rule deleted from a copy of one src file (a needle that must occur
+// exactly once, else the control is red: a control that has quietly stopped
+// sabotaging anything is worse than none), or, for unknown-operation, with
+// conformance-controls/unknown-operation.txt added to the corpus. control.luau
+// carries the control's name and its conformance-controls/<name>.expected
+// list, and the conformance test passes only when the vectors that fail are
+// exactly that list.
 //
 // Standard library only; no time, no sockets, no network.
 package main
@@ -43,8 +56,31 @@ const luauVersion = "0.741"
 
 func main() {
 	root := flag.String("root", ".", "the repository root")
+	controls := flag.Bool("controls", false, "run the negative controls of tools/controls/controls.tsv")
 	flag.Parse()
+	if *controls {
+		os.Exit(runControls(*root, os.Stdout, os.Stderr))
+	}
 	os.Exit(run(*root, flag.Args(), os.Stdout, os.Stderr))
+}
+
+// runSpec is how one run directory is built: the test files to drive, and, for a
+// control, the control's name, its expected list, a source patch and an
+// extra corpus file.
+type runSpec struct {
+	label    string
+	dir      string   // build/run/<dir>
+	testDir  string   // test/<name>, whose .luau files join the unit
+	tests    []string // the *_test.luau files the driver runs
+	control  string   // the control's name, empty for an ordinary run
+	expected string   // the control's expected list, verbatim
+	patch    *patch
+	extra    map[string][]byte // extra corpus files, by base name
+}
+
+// patch replaces needle, which must occur exactly once, in a copy of file.
+type patch struct {
+	file, needle, replacement string
 }
 
 func run(root string, names []string, stdout, stderr io.Writer) int {
@@ -118,7 +154,13 @@ func runDir(root, luau, name string, stdout, stderr io.Writer) bool {
 		fmt.Fprintf(stdout, "FAIL %s is empty: no *_test.luau files\n", label)
 		return false
 	}
-	runDir := filepath.Join(root, "build", "run", name)
+	return runUnit(root, luau, runSpec{label: label, dir: name, testDir: testDir, tests: tests}, stdout, stderr)
+}
+
+// runUnit builds build/run/<u.dir>/ and runs its tests, reporting success.
+func runUnit(root, luau string, u runSpec, stdout, stderr io.Writer) bool {
+	label, testDir, tests := u.label, u.testDir, u.tests
+	runDir := filepath.Join(root, "build", "run", u.dir)
 	unit := filepath.Join(runDir, "src")
 	if err := os.RemoveAll(runDir); err != nil {
 		fmt.Fprintf(stderr, "luaurun: %v\n", err)
@@ -143,12 +185,33 @@ func runDir(root, luau, name string, stdout, stderr io.Writer) bool {
 			return false
 		}
 	}
-	inputs, err := inputsModule(filepath.Join(root, "conformance"))
+	if u.patch != nil {
+		target := filepath.Join(unit, u.patch.file)
+		b, err := os.ReadFile(target)
+		if err != nil {
+			fmt.Fprintf(stdout, "FAIL %s: the patched file %s is not in the unit\n", label, u.patch.file)
+			return false
+		}
+		if n := strings.Count(string(b), u.patch.needle); n != 1 {
+			fmt.Fprintf(stdout, "FAIL %s: the needle occurs %d times in %s, not once: %q\n", label, n, u.patch.file, u.patch.needle)
+			return false
+		}
+		b = []byte(strings.Replace(string(b), u.patch.needle, u.patch.replacement, 1))
+		if err := os.WriteFile(target, b, 0o644); err != nil {
+			fmt.Fprintf(stderr, "luaurun: %v\n", err)
+			return false
+		}
+	}
+	inputs, err := inputsModule(filepath.Join(root, "conformance"), u.extra)
 	if err != nil {
 		fmt.Fprintf(stderr, "luaurun: %v\n", err)
 		return false
 	}
 	if err := os.WriteFile(filepath.Join(unit, "inputs.luau"), inputs, 0o644); err != nil {
+		fmt.Fprintf(stderr, "luaurun: %v\n", err)
+		return false
+	}
+	if err := os.WriteFile(filepath.Join(unit, "control.luau"), controlModule(u.control, u.expected), 0o644); err != nil {
 		fmt.Fprintf(stderr, "luaurun: %v\n", err)
 		return false
 	}
@@ -199,39 +262,146 @@ func copyFile(from, to string) error {
 }
 
 // inputsModule is the Luau source of inputs.luau: a frozen table mapping each
-// conformance file's base name (bool for conformance/bool.txt) to its text.
-func inputsModule(dir string) ([]byte, error) {
+// conformance file's base name (bool for conformance/bool.txt) to its text,
+// plus any extra files a control adds.
+func inputsModule(dir string, extra map[string][]byte) ([]byte, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.txt"))
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(files)
-	var b strings.Builder
-	b.WriteString("--!strict\n-- inputs.luau, written by tools/luaurun (DESIGN.md (i)): conformance/*.txt as strings\nreturn table.freeze({\n")
+	texts := map[string][]byte{}
 	for _, f := range files {
 		text, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(&b, "\t[\"%s\"] = \"", strings.TrimSuffix(filepath.Base(f), ".txt"))
-		for _, c := range text {
-			switch {
-			case c == '\\' || c == '"':
-				b.WriteByte('\\')
-				b.WriteByte(c)
-			case c == '\n':
-				b.WriteString("\\n")
-			case c >= 0x20 && c < 0x7f:
-				b.WriteByte(c)
-			default:
-				fmt.Fprintf(&b, "\\x%02x", c)
-			}
+		texts[strings.TrimSuffix(filepath.Base(f), ".txt")] = text
+	}
+	for name, text := range extra {
+		if _, clash := texts[name]; clash {
+			return nil, fmt.Errorf("the control's extra corpus file %s.txt is already in conformance/", name)
 		}
-		b.WriteString("\",\n")
+		texts[name] = text
+	}
+	names := make([]string, 0, len(texts))
+	for name := range texts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	b.WriteString("--!strict\n-- inputs.luau, written by tools/luaurun (DESIGN.md (i)): conformance/*.txt as strings\nreturn table.freeze({\n")
+	for _, name := range names {
+		fmt.Fprintf(&b, "\t[%s] = %s,\n", luauString([]byte(name)), luauString(texts[name]))
 	}
 	b.WriteString("})\n")
 	return []byte(b.String()), nil
 }
+
+// luauString is text as a Luau string literal.
+func luauString(text []byte) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, c := range text {
+		switch {
+		case c == '\\' || c == '"':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case c == '\n':
+			b.WriteString("\\n")
+		case c >= 0x20 && c < 0x7f:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "\\x%02x", c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// controlModule is the Luau source of control.luau: the control this run is
+// (an empty name for an ordinary run) and its expected list, verbatim.
+func controlModule(name, expected string) []byte {
+	return []byte("--!strict\n-- control.luau, written by tools/luaurun: the negative control this run is, if any\nreturn table.freeze({ name = " +
+		luauString([]byte(name)) + ", expected = " + luauString([]byte(expected)) + " })\n")
+}
+
+// runControls runs every control of tools/controls/controls.tsv: one line per
+// control, four tab-separated fields, name, src file, needle and replacement
+// (\n and \t in a needle or replacement are a newline and a tab, so a needle
+// can span lines; a file of "-" and empty needle and replacement for
+// unknown-operation, which
+// patches nothing and adds conformance-controls/unknown-operation.txt to the
+// corpus instead). Lines starting with # are comments.
+func runControls(root string, stdout, stderr io.Writer) int {
+	luau, why := interpreter(root)
+	if luau == "" {
+		fmt.Fprintf(stderr, "luaurun: the Luau interpreter does not resolve: %s\n", why)
+		return 1
+	}
+	table, err := os.ReadFile(filepath.Join(root, "tools", "controls", "controls.tsv"))
+	if err != nil {
+		fmt.Fprintf(stdout, "FAIL controls: %v\n", err)
+		return 1
+	}
+	testDir := filepath.Join(root, "test", "conformance")
+	tests := []string{filepath.Join(testDir, "conformance_test.luau")}
+	ran, failed := 0, 0
+	for i, line := range strings.Split(string(table), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 4 || !validControl.MatchString(fields[0]) {
+			fmt.Fprintf(stdout, "FAIL controls.tsv:%d: want name<TAB>file<TAB>needle<TAB>replacement\n", i+1)
+			failed++
+			continue
+		}
+		name := fields[0]
+		u := runSpec{label: "control " + name, dir: "control-" + name, testDir: testDir, tests: tests, control: name}
+		if name == "unknown-operation" {
+			text, err := os.ReadFile(filepath.Join(root, "conformance-controls", "unknown-operation.txt"))
+			if err != nil {
+				fmt.Fprintf(stdout, "FAIL control %s: %v\n", name, err)
+				failed++
+				continue
+			}
+			u.extra = map[string][]byte{"unknown-operation": text}
+			var names []string
+			for _, l := range strings.Split(string(text), "\n") {
+				if strings.HasPrefix(l, "name ") {
+					names = append(names, strings.TrimPrefix(l, "name "))
+				}
+			}
+			u.expected = strings.Join(names, "\n") + "\n"
+		} else {
+			expected, err := os.ReadFile(filepath.Join(root, "conformance-controls", name+".expected"))
+			if err != nil {
+				fmt.Fprintf(stdout, "FAIL control %s: %v\n", name, err)
+				failed++
+				continue
+			}
+			u.expected = string(expected)
+			unescape := strings.NewReplacer(`\n`, "\n", `\t`, "\t")
+			u.patch = &patch{file: fields[1], needle: unescape.Replace(fields[2]), replacement: unescape.Replace(fields[3])}
+		}
+		ran++
+		if !runUnit(root, luau, u, stdout, stderr) {
+			failed++
+		}
+	}
+	if ran == 0 {
+		fmt.Fprintf(stdout, "FAIL controls: controls.tsv names no control\n")
+		return 1
+	}
+	if failed != 0 {
+		fmt.Fprintf(stdout, "FAIL %d of %d negative controls\n", failed, ran)
+		return 1
+	}
+	fmt.Fprintf(stdout, "ok %d negative controls\n", ran)
+	return 0
+}
+
+var validControl = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // driver is the Luau source of _luaurun.luau: it requires every test module
 // by a literal ./ path and runs its Test functions in sorted order.

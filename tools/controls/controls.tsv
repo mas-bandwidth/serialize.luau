@@ -1,0 +1,26 @@
+# tools/controls/controls.tsv -- the negative controls (STANDARD.md, "A gate nobody has seen go red";
+# tools/luaurun -controls). One control per line: name, the src file, the needle (which must occur
+# exactly once in that file) and its replacement, TAB separated. Each deletes ONE refusal rule from a
+# copy of the unit, and the conformance corpus run against it must fail exactly the vectors of
+# conformance-controls/<name>.expected. unknown-operation patches nothing: it adds
+# conformance-controls/unknown-operation.txt to the corpus, whose one vector must fail.
+#
+# Carried: every control the reference names except ranged-reconstruction and ranged-range, whose
+# .expected lists assume the C++ structure (int_relative's bounded tiers and the string length read
+# through serialize_int); this port reads those tiers and that length in their own family, so a
+# one-line deletion in serialize_int cannot reach them. Both rules stay covered: the int family's
+# own tests and the corpus vectors that pin them run in every ordinary run.
+unknown-operation	-		
+align-padding	serialize_stream.luau	if self:_readBits(n) ~= 0 then	if self:_readBits(n) ~= 0 and n < 0 then
+float-finite	serialize_float.luau	if not floatBitsAreFinite(bits) then	if not floatBitsAreFinite(bits) and bits < 0 then
+double-finite	serialize_float.luau	if not doubleBitsAreFinite(high) then	if not doubleBitsAreFinite(high) and high < 0 then
+compressed-float-finite	serialize_compressed_float.luau	if not isFinite(decoded) then	if not isFinite(decoded) and decoded ~= decoded and decoded == decoded then
+end-trailing-data	serialize_stream.luau	if remaining >= 8 then	if remaining >= 8 and remaining < 0 then
+end-padding	serialize_stream.luau	if paddingBits > 0 and self:_readBits(paddingBits) ~= 0 then	if paddingBits > 0 and self:_readBits(paddingBits) ~= 0 and paddingBits < 0 then
+int-relative-canonical	serialize_int_relative.luau	if absolute - previous <= BOUNDED_MAX then	if absolute - previous <= BOUNDED_MAX and absolute < 0 then
+fixed-degenerate-terminal	serialize_fixed.luau	local rawMin, rawRange, numBits = params64(integerBits, fractionBits, min, max)\n\tif self:_latched() then\n\t\treturn false\n\tend\n\tif self:_available() < numBits then	local rawMin, rawRange, numBits = params64(integerBits, fractionBits, min, max)\n\tif self:_latched() and numBits > 0 then\n\t\treturn false\n\tend\n\tif self:_available() < numBits then
+string-embedded-nul	serialize_bytes.luau	if string.find(value, "\0", 1, true) ~= nil then	if string.find(value, "\0", 1, true) ~= nil and #value < 0 then
+string-utf8	serialize_bytes.luau	if not utf8Valid(value) then	if not utf8Valid(value) and #value < 0 then
+string-utf8-surrogate	serialize_bytes.luau	 or (rune >= 0xD800 and rune <= 0xDFFF)	
+wrong-reason	serialize_bytes.luau	return EmbeddedNul	return InvalidUtf8
+int64-through-double	serialize_int.luau	holder.value = integer.add(offset, min)	holder.value = (function(d: number): integer return if d >= 9223372036854775807 then integer.sub(integer.lshift(1i, 63i), 1i) else integer.create(d) end)(integer.tonumber(integer.add(offset, min)))

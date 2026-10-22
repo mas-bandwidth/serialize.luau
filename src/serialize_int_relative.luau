@@ -1,7 +1,7 @@
 --!strict
 -- serialize_int_relative.luau — int_relative (DESIGN.md (a), (c), (g) and
 -- (h); STANDARD.md int_relative), wire compatible with serialize (format
--- version 1.1) and serialize.go v1.15.1 write_stream.go, read_stream.go and
+-- version 2.0) and serialize.go v2.0.0 write_stream.go, read_stream.go and
 -- measure_stream.go: the same values produce the same bytes and the same
 -- refusals.
 --
@@ -30,8 +30,14 @@ local RAISE_CURRENT_TYPE = "serialize: serializeIntRelative current must be inte
 local RAISE_HOLDER_TYPE = "serialize: serializeIntRelative holder must be table"
 
 -- The latched kinds (DESIGN.md (a)); the stream values are the same strings.
-local OVERFLOW = "overflow"
+local PAST_END = "past_end"
 local VALUE_OUT_OF_RANGE = "value_out_of_range"
+local NON_CANONICAL = "non_canonical"
+
+-- The last bounded tier's top difference (STANDARD.md int_relative): an
+-- absolute tier carrying a difference no greater than this is a second
+-- encoding of a value a bounded tier carries.
+local BOUNDED_MAX = 69914
 
 -- intRelativeBuckets (serialize.go stream.go): each bucket's payload is
 -- serialize_int(d, min, max), whose wire width is BitsRequired(min, max).
@@ -92,7 +98,7 @@ end
 -- goes past the data's end; STANDARD.md int_relative rule 3).
 local function canRead(s: any, bits: number): boolean
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	return true
 end
@@ -115,7 +121,7 @@ local M = {}
 -- the difference fits (STANDARD.md int_relative: the canonical encoding).
 -- previous outside the domain raises; previous not less than current and
 -- current outside the domain latch ValueOutOfRange; a full buffer latches
--- Overflow before any bit moves (DESIGN.md (g)).
+-- PastEnd before any bit moves (DESIGN.md (g)).
 function M.writeIntRelative(s: any, previous: number, holder: any): boolean
 	checkPrevious(previous)
 	requireHolder(holder)
@@ -133,7 +139,7 @@ function M.writeIntRelative(s: any, previous: number, holder: any): boolean
 	local difference = current - previous
 	local width = writeWidth(difference)
 	if s:_available() < width then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	if difference == 1 then
 		s:_writeBits(1, 1)
@@ -190,7 +196,19 @@ function M.readIntRelative(s: any, previous: number, holder: any): boolean
 	if not canRead(s, 32) then
 		return false
 	end
-	return result(s, previous, s:_readBits(32), holder)
+	-- the absolute tier: the domain and ordering rule first, then the
+	-- canonical rule, a difference a bounded tier carries refused as
+	-- NonCanonical (STANDARD.md int_relative, "The absolute tier is canonical
+	-- too"). The group is unsigned and a number, so the difference cannot wrap.
+	local absolute = s:_readBits(32)
+	if absolute > INT_RELATIVE_MAX or absolute <= previous then
+		return s:_fail(VALUE_OUT_OF_RANGE)
+	end
+	if absolute - previous <= BOUNDED_MAX then
+		return s:_fail(NON_CANONICAL)
+	end
+	holder.value = absolute
+	return true
 end
 
 -- measureIntRelative counts exactly the bits writeIntRelative would emit and

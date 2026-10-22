@@ -1,7 +1,7 @@
 --!strict
 -- serialize_compressed_float.luau — the compressed_float family (DESIGN.md
 -- (a), (e), (g) and (h); STANDARD.md, Floating Point, "compressed_float"): a
--- float quantized to a resolution, wire compatible with serialize.go v1.15.1.
+-- float quantized to a resolution, wire compatible with serialize.go v2.0.0.
 --
 -- The wire constants come from CompressedFloatParams (serialize.go stream.go):
 -- delta = max - min, values = delta / res clamped to [1, 4294967040],
@@ -16,6 +16,13 @@
 -- DESIGN.md (e)) — the one deliberate deviation from serialize.go's write arm,
 -- which clamps NaN to 0. The read and measure arms never see the value.
 --
+-- The decode must be finite (STANDARD.md, compressed_float, "The decode must
+-- be finite"): a reader refuses a decode that is not finite with
+-- NonFiniteFloat, its destination unwritten, whatever the declaration. The
+-- writer raises on a declaration whose top integer decodes past FLT_MAX
+-- (min + delta, rounded once in float32), as serialize.go's writer panics;
+-- only the writer checks the declaration, never the reader.
+--
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 
 local Bits = require("./serialize_bits")
@@ -26,13 +33,14 @@ local fround = Float.fround
 local bitsRequired = Bits.bitsRequired
 
 -- Raise messages for API misuse: serialize.go's panic strings (serialize.go
--- v1.15.1 serialize.go; DESIGN.md (a) and (g)), plus STANDARD.md's non-finite
+-- v2.0.0 serialize.go; DESIGN.md (a) and (g)), plus STANDARD.md's non-finite
 -- write raise.
 local RAISE_FLOAT_PARAMS = "serialize: compressed float requires min < max and resolution > 0"
 local RAISE_PRECOMPUTED = "serialize: precomputed compressed float constants must be exactly what CompressedFloatParams derives"
 local RAISE_NONFINITE = "serialize: compressed float value must be finite"
 local RAISE_VALUE = "serialize: serializeCompressedFloat value must be a number"
 local RAISE_VALUE_PRECOMPUTED = "serialize: serializeCompressedFloatPrecomputed value must be a number"
+local RAISE_DECODE = "serialize: compressed float declaration's top integer must decode to a finite float32 (min + delta)"
 
 local VALUES_CLAMP_HIGH = 4294967040.0
 
@@ -82,6 +90,9 @@ end
 -- max_integer_value. The !>= / !<= clamp form forces NaN into range too, mirror
 -- of Go's. The whole width is bounds checked before any bit moves (DESIGN.md (g)).
 local function writeCommon(s: any, h: any, maxIntegerValue: number, bits: number, delta: number, min: number): boolean
+	if not isFinite(fround(min + delta)) then
+		error(RAISE_DECODE, 3)
+	end
 	if s:_latched() then
 		return false
 	end
@@ -96,7 +107,7 @@ local function writeCommon(s: any, h: any, maxIntegerValue: number, bits: number
 		integerVal = maxIntegerValue
 	end
 	if s:_available() < bits then
-		return s:_fail(Stream.SerializeError.Overflow)
+		return s:_fail(Stream.SerializeError.PastEnd)
 	end
 	s:_writeBits(integerVal, bits)
 	return true
@@ -105,21 +116,26 @@ end
 -- readCommon is the read-side home (serialize.go read_stream.go
 -- compressedFloat32Precomputed): refuse an integer above max_integer_value, then
 -- divide by max_integer_value, multiply by delta and add min, every step float32
--- with its own rounding. The destination is left unwritten on a refusal and the
+-- with its own rounding, and refuse a decode that is not finite with
+-- NonFiniteFloat. The destination is left unwritten on a refusal and the
 -- stream is terminal (DESIGN.md (g)).
 local function readCommon(s: any, h: any, maxIntegerValue: number, bits: number, delta: number, min: number): boolean
 	if s:_latched() then
 		return false
 	end
 	if s:_available() < bits then
-		return s:_fail(Stream.SerializeError.Overflow)
+		return s:_fail(Stream.SerializeError.PastEnd)
 	end
 	local integerVal = s:_readBits(bits)
 	if integerVal > maxIntegerValue then
 		return s:_fail(Stream.SerializeError.ValueOutOfRange)
 	end
 	local n = fround(fround(integerVal) / fround(maxIntegerValue))
-	h.value = fround(fround(n * delta) + min)
+	local decoded = fround(fround(n * delta) + min)
+	if not isFinite(decoded) then
+		return s:_fail(Stream.SerializeError.NonFiniteFloat)
+	end
+	h.value = decoded
 	return true
 end
 

@@ -3,10 +3,10 @@
 -- STANDARD.md, Integers: int (ranged) and int64 (ranged)).
 --
 -- The stream dispatches serializeInt and serializeInt64 here; each arm does
--- the whole operation in serialize.go v1.15.1's order: raise on API misuse
+-- the whole operation in serialize.go v2.0.0's order: raise on API misuse
 -- (a min greater than max), refuse a latched stream, refuse a value outside
 -- [min,max] with ValueOutOfRange, refuse a write that does not fit with
--- Overflow, then move the offset in the operation's unsigned domain so a span
+-- PastEnd, then move the offset in the operation's unsigned domain so a span
 -- wider than 2^31 (or 2^63) is exact (STANDARD.md, int (ranged)).
 --
 -- A degenerate range min == max costs zero bits and takes its value from the
@@ -19,7 +19,7 @@ local RAISE_MINMAX = "serialize: min must not be greater than max"
 local RAISE_INT32 = "serialize: serializeInt parameters must be int32 numbers"
 local RAISE_INT64 = "serialize: serializeInt64 parameters must be integers"
 
-local OVERFLOW = "overflow"
+local PAST_END = "past_end"
 local OUT_OF_RANGE = "value_out_of_range"
 
 local INT32_MIN = -2147483648
@@ -76,7 +76,7 @@ function writeInt(s: any, holder: any, min: number, max: number): boolean
 		return s:_measure(bits)
 	end
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	if bits > 0 then
 		s:_writeBits((value - min) % TWO32, bits)
@@ -96,7 +96,7 @@ function readInt(s: any, holder: any, min: number, max: number): boolean
 	end
 	local bits = bitsRequired(min, max)
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	if bits == 0 then
 		holder.value = min
@@ -149,7 +149,7 @@ function writeInt64(s: any, holder: any, min: integer, max: integer): boolean
 		return s:_measure(bits)
 	end
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	if bits > 0 then
 		s:_writeBits64(integer.sub(value, min), bits)
@@ -169,7 +169,7 @@ function readInt64(s: any, holder: any, min: integer, max: integer): boolean
 	end
 	local bits = bitsRequired64(min, max)
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	if bits == 0 then
 		holder.value = min

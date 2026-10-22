@@ -6,17 +6,27 @@ calls this library instead of a private bit reader and writer, and vendors
 these files unchanged. This page fixes every decision; each family card after
 it creates one file and decides nothing. Sections (a) to (i) are the contract.
 
-**The oracle.** serialize.go v1.15.1 (`963f6dfe2327163053301bac16f55bc281902f9a`)
-is the reference implementation, matched byte for byte, refusal for refusal.
-serialize.js (`ff765a1a89a89dc3f6e818e553baabf189241b4e`) is the closest
-worked example and supplies the spelling. Both are read, never imported.
+**Format 2.0.** This library implements format version 2.0 (STANDARD.md,
+Format version): float and double carry finite values only, every refusal
+names its reason from a closed list, a packet reader calls `serializeEnd`
+after its top-level object, the int_relative absolute tier is canonical, and
+wstring is gone. Format 1.1 was this library's first wire; 2.0 keeps every
+byte of every finite value 1.1 could carry.
 
-**The vendored standard.** `STANDARD.md` and `conformance/*.txt` are copied
-VERBATIM from mas-bandwidth/serialize at tag v1.17.0
-(`56a1b590af814474b56ff72b0d05d4be4d7cf41b`). They are the same bytes as
-serialize.go v1.15.1's own copies: `diff -r conformance <serialize v1.17.0>/conformance`,
-`diff -r conformance <serialize.go v1.15.1>/conformance` and `cmp STANDARD.md <serialize.go v1.15.1>/STANDARD.md` are all empty (checked 2026-10-17 on hulk).
-Neither file is edited here; a change arrives by re-vendoring from a new tag.
+**The oracle.** serialize.go v2.0.0 (module `github.com/mas-bandwidth/serialize.go/v2`,
+`a3ffd9136906dfc4db5b2fb6d146181d749b00c5`) is the reference implementation, matched byte for byte, refusal for
+refusal, reason for reason. serialize.js (`ff765a1a89a89dc3f6e818e553baabf189241b4e`)
+is the closest worked example and supplies the spelling. Both are read, never
+imported.
+
+**The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/*.txt`
+and `conformance-controls/` are copied
+VERBATIM from mas-bandwidth/serialize at tag v2.0.0
+(`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`; the standard and corpus
+pin `dedf58efa93832fd243dbf3a2a1ca0a91c46b14b`) by
+`tools/revendor/revendor.sh v2.0.0`, which diffs them against the tag's own
+copies. CI's corpus job diffs all four against the tag on every run. None is
+edited here; a change arrives by re-vendoring from a new tag.
 
 **The pin.** Luau 0.741, the same pin as schema's Luau leg (schema
 `docs/PORT-LUAU.md`, branch `sprint/schema-luau-port-design.w1.g1.e21`,
@@ -26,7 +36,7 @@ Neither file is edited here; a change arrives by re-vendoring from a new tag.
 
 `local serialize = require("./serialize")` returns a frozen table. Names are
 serialize.js's spelling (src/index.js, src/streams.js) of everything
-serialize.go v1.15.1 exports. Values move through HOLDERS, `{ value = ... }`,
+serialize.go v2.0.0 exports. Values move through HOLDERS, `{ value = ... }`,
 as serialize.js's refs do: a write reads `holder.value`, a read assigns it only
 on success. Every serialize method returns a boolean: `true` on success,
 `false` on a refusal.
@@ -35,8 +45,8 @@ on success. Every serialize method returns a boolean: `true` on success,
 
 | name | serialize.go | family file |
 |---|---|---|
-| `FORMAT_VERSION` | format version 1.1 | entry (`"1.1"`) |
-| `SerializeError` | `ErrOverflow`, `ErrValueOutOfRange`, `ErrAlign` | stream |
+| `FORMAT_VERSION` | format version 2.0 | entry (`"2.0"`) |
+| `SerializeError` | `Refusal` and its eight `Err*` reasons | stream |
 | `WriteStream`, `ReadStream`, `MeasureStream` | the three streams | stream |
 | `Continue(stream, holder)`, `Until(stream, holder)` | `Continue`, `Until` | stream |
 | `BitWriter`, `BitReader` | `BitWriter`, `BitReader` | bitpacker |
@@ -49,20 +59,26 @@ on success. Every serialize method returns a boolean: `true` on success,
 
 `_family(name)` is the lazy loader, exposed for test/smoke only.
 
-### SerializeError: the latched kinds
+### SerializeError: the refusal reasons
 
-| kind | value | serialize.go |
+The closed list of STANDARD.md, Refusal reasons, each value spelled exactly as
+the standard spells it:
+
+| reason | value | the rule that refuses |
 |---|---|---|
-| `SerializeError.Overflow` | `"overflow"` | `ErrOverflow`: a read past the end of the data, or a write past the end of the buffer |
-| `SerializeError.ValueOutOfRange` | `"value_out_of_range"` | `ErrValueOutOfRange`: a value outside the range it is serialized with, and every string refusal |
-| `SerializeError.Align` | `"align"` | `ErrAlign`: nonzero padding bits in an align |
+| `SerializeError.PastEnd` | `"past_end"` | a read past the end of the data, or a write past the end of the buffer |
+| `SerializeError.ValueOutOfRange` | `"value_out_of_range"` | a value outside its declared range or domain: a ranged offset past its span, a string length past its buffer, a compressed integer past `max_integer_value`, an int_relative outside its domain or not increasing |
+| `SerializeError.NonzeroPadding` | `"nonzero_padding"` | a set bit in an align's padding (bytes and string included), or in the final byte's unused bits at the end |
+| `SerializeError.TrailingData` | `"trailing_data"` | a whole byte or more after the end of the object |
+| `SerializeError.NonFiniteFloat` | `"non_finite_float"` | a float or double that is NaN or an infinity, or a compressed_float decode that is not finite |
+| `SerializeError.InvalidUtf8` | `"invalid_utf8"` | a string payload that is not well-formed UTF-8 |
+| `SerializeError.EmbeddedNul` | `"embedded_nul"` | a zero byte among a string's bytes |
+| `SerializeError.NonCanonical` | `"non_canonical"` | the int_relative absolute tier carrying a difference a bounded tier carries |
 
-`stream:error()` returns the first latched kind or `nil`; `stream:ok()` is
-`stream:error() == nil`. The first error sticks; every later call returns
-`false`, consumes nothing and writes nothing to its destination (g). Only
-`reset` clears it. Deviation: serialize.js's `InvalidString` is absent, because
-serialize.go refuses a malformed string with `ErrValueOutOfRange` and Go is the
-oracle.
+`stream:error()` returns the FIRST latched reason or `nil`; `stream:ok()` is
+`stream:error() == nil`. The first refusal sticks: every later call returns
+`false`, consumes nothing, writes nothing to its destination and keeps the
+first reason (g). Only `reset` clears it.
 
 ### The streams
 
@@ -92,9 +108,9 @@ compressed float, which Go's concrete streams all carry):
 | `serializeCompressedFloat(h, min, max, resolution)` | number | `SerializeCompressedFloat32` |
 | `serializeCompressedFloatPrecomputed(h, maxIntegerValue, bits, delta, min)` | number | `SerializeCompressedFloat32Precomputed` |
 | `serializeBytes(data)` | a buffer, its whole length | `SerializeBytes` |
-| `serializeString(h, bufferSize)` | string (bytes) | `SerializeString` |
-| `serializeWideString(h, bufferSize)` | string (UTF-8) | `SerializeWideString` |
+| `serializeString(h, bufferSize)` | string (bytes, well-formed UTF-8, no NUL) | `SerializeString` |
 | `serializeAlign()` | | `SerializeAlign` |
+| `serializeEnd()` | | `SerializeEnd` |
 | `serializeObject(object)` | a table with `serialize(self, stream)` | `SerializeObject` |
 | `serializeIntRelative(previous, h)` | number; previous a number | `SerializeIntRelative` |
 | `alignBits()`, `bitsProcessed()`, `bytesProcessed()` | | `AlignBits`, `BitsProcessed`, `BytesProcessed` |
@@ -103,6 +119,23 @@ compressed float, which Go's concrete streams all carry):
 WriteStream also carries `flush()`, `data()` and `bitsAvailable()` (Go's
 `Flush` and `Data`, serialize.js's `bitsAvailable`). `data()` returns a fresh
 buffer of `bytesProcessed()` bytes, because a Luau buffer has no slices.
+
+`serializeEnd()` is the end of the object (STANDARD.md end). A packet reader
+calls it after the last field of the packet's top-level object, with the
+stream holding exactly the packet's bytes; without it, trailing bytes and
+padding go unexamined:
+
+```luau
+local r = serialize.ReadStream.new(packet)
+if not r:serializeObject(message) or not r:serializeEnd() then
+	return nil, r:error() -- the reason, from SerializeError
+end
+```
+
+On a read it refuses a failed stream with its first reason, then a whole byte
+or more left over as `TrailingData` (checked first), then a set bit among the
+final byte's 0 to 7 unused bits as `NonzeroPadding`; an accepted end leaves
+the stream exactly consumed. On a write or a measure it is a no-op of 0 bits.
 
 `Continue(stream, more)` serializes `more.value` as one bit and returns it,
 `false` as soon as the stream has an error; `Until(stream, done)` is the
@@ -135,8 +168,9 @@ because Go's panic check comes before its error check. A holder value or a
 parameter that serialize.go's parameter TYPE could not hold (a non-integer, a
 number outside the Go type's domain, a value of the wrong Luau type) is the
 Luau form of a Go compile error: it raises `serialize: <method> <name> must be <type>`. A value the type holds but the operation refuses (outside
-`[min,max]`, a string too long for its buffer) latches, exactly where Go
-latches.
+`[min,max]`, a string too long for its buffer, a float that is not finite,
+a string that is not well-formed UTF-8 or holds a NUL) latches, with its
+reason.
 
 ## (b) BIT ORDER AND ENDIANNESS
 
@@ -221,22 +255,23 @@ bytes: `#s` is its byte length; a string holder moves through
 Restated from schema docs/PORT-LUAU.md, BYTE BUFFERS (the coordinator's
 float32 ruling, 2026-10-17):
 
+- Floats are FINITE (STANDARD.md, "Finite values only, every one bit
+  exact"): a pattern whose exponent field is all ones (NaN with any payload,
+  either infinity) is refused as `NonFiniteFloat`. The read tests the RAW
+  BITS off the wire, before any conversion and before the holder is written;
+  the write tests the bits after the narrowing below, so a finite double past
+  float32's range, which narrows to an infinity, is refused too. Every finite
+  pattern, negative zero and the subnormals included, is bit exact.
 - A float32 holder stores a double. A write handed a double that is not
   exactly a float32 converts it THE WAY serialize.go's caller does,
-  `float32(v)`: round to nearest, ties to even, a finite double past float32's
-  range to ±infinity, ±infinity to itself, a NaN as Go converts it. Luau's
-  `buffer.writef32` is that conversion; `fround(x)` (write with `writef32`,
-  read back) exposes it. No write refuses a double for having more precision
-  than a float32.
-- A float32 READ never goes through a conversion: the 32 bits come off the
-  wire with `_readBits(32)` and become the double by bit surgery (sign,
-  rebiased exponent, mantissa shifted left 29, assembled as two u32 halves and
-  read back with `readf64`; subnormals exactly, NaN payloads kept). A write of
-  a double that is exactly a float32 value (every value a read produced, a NaN
-  whose low 29 mantissa bits are zero included) moves its bits back by the
-  inverse surgery, so a signalling NaN and its payload survive a round trip;
-  every other double goes through `writef32`.
-- A double moves by bits too: `writef64` then two `readu32`, and back.
+  `float32(v)`: round to nearest, ties to even. Luau's `buffer.writef32` is
+  that conversion; `fround(x)` (write with `writef32`, read back) exposes it.
+  No write refuses a double for having more precision than a float32.
+- A float32 read is `writeu32` then `readf32`: a finite float32 widens to a
+  double exactly, subnormals included. (Format 1.1 carried NaN payloads, and
+  this port moved them by bit surgery; format 2.0 refuses them, and the
+  surgery is gone.)
+- A double moves by bits: `writef64` then two `readu32`, and back.
 - The same rule narrows the float32 PARAMETERS of compressed_float (`min`,
   `max`, `resolution`, `delta`): each is `fround`ed on entry, as Go's float32
   parameters are.
@@ -244,10 +279,10 @@ float32 ruling, 2026-10-17):
   float32 operation, in serialize.go's order. Write: `n = fround(fround(v - min) / delta)`, clamped with the `not (n >= 0)` / `not (n <= 1)` form, then
   `math.floor(fround(fround(n * fround(maxIntegerValue)) + 0.5))`, then the
   integer clamp to `maxIntegerValue`. The `+ 0.5` is a float32 add: serialize.go
-  v1.15.1 write_stream.go:386 is `uint32(math.Floor(float64(float32(n*float32(m))
+  v1.15.1 write_stream.go:386 (v2.0.0 keeps it) is `uint32(math.Floor(float64(float32(n*float32(m))
   + 0.5)))`, and STANDARD.md, compressed_float, says the product rounds to float32 before 0.5 is added and "that sum rounds to float32 before the floor" (two roundings, so a float64 add is wrong: m = 16777215, n = 8388609/16777215 writes 8388610 in Go, 8388609 with a float64 add). A non-finite input value (NaN, +inf, -inf) RAISES on write, `serialize:
-  compressed float value must be finite`, before the latch check and before any arithmetic: STANDARD.md, compressed_float, Non-finite inputs are non-conforming ("should assert out on write too"), the same rule in the Luau, Lua and Squirrel ports. Go clamps a NaN to 0 here; this port does not, the one deliberate deviation from serialize.go's write arm, for STANDARD.md's ruling. The read and measure arms never see the value and are untouched. Read: `fround(fround(fround(i) /
-  fround(maxIntegerValue)) * delta)` then `fround(that + min)`. Params:
+  compressed float value must be finite`, before the latch check and before any arithmetic: STANDARD.md, compressed_float, Non-finite inputs are non-conforming ("should assert out on write too"), the same rule in the Luau, Lua and Squirrel ports. Go clamps a NaN to 0 here; this port does not, the one deliberate deviation from serialize.go's write arm, for STANDARD.md's ruling. The read and measure arms never see the value and are untouched. A declaration whose top integer decodes past FLT_MAX (`fround(min + delta)` not finite) RAISES on write, `serialize: compressed float declaration's top integer must decode to a finite float32`, as serialize.go's writer panics. Read: `fround(fround(fround(i) /
+  fround(maxIntegerValue)) * delta)` then `fround(that + min)`, and a decode that is not finite is refused as `NonFiniteFloat`, the holder unwritten, whatever the declaration (STANDARD.md, "The decode must be finite"). Params:
   `delta = fround(max - min)`, `values = fround(delta / resolution)`, clamped
   to `[1, 4294967040]`, `maxIntegerValue = math.ceil(values)`. Each fround of
   a double operation on float32 operands equals the float32 operation (a double
@@ -285,32 +320,43 @@ paragraph:
 
 ## (g) WRITER AND READER
 
-**The writer is STRICT.** It writes exactly serialize.go v1.15.1's bytes for
-the same values. It latches `ValueOutOfRange` or `Overflow` exactly where
-serialize.go's WriteStream returns `ErrValueOutOfRange` or `ErrOverflow`, and
-raises, naming the rule, exactly where serialize.go panics on API misuse (a),
-and on a non-finite compressed float value, STANDARD.md's ruling (e).
-It writes nothing on a refusal: every bounds check is of the whole operation's
-width before any bit moves (a refused wide write leaves no dangling low
-dword). Where serialize.go decodes a Go string, the Luau writer decodes the
-same way: `serializeWideString` walks the bytes as Go's `for range` does
-(each invalid byte becomes U+FFFD and advances one byte), and
-`serializeString` writes the bytes as given (UTF-8 well-formedness is the
-writer's contract, STANDARD.md string, and serialize.go does not check it).
+**The writer is STRICT.** It writes exactly serialize.go v2.0.0's bytes for
+the same values. It latches `ValueOutOfRange`, `PastEnd` and
+`NonFiniteFloat` exactly where serialize.go's WriteStream returns those
+reasons, and raises, naming the rule, exactly where serialize.go panics on API
+misuse (a), and on a non-finite compressed float value, STANDARD.md's ruling
+(e). It writes nothing on a refusal: every bounds check is of the whole
+operation's width before any bit moves (a refused wide write leaves no
+dangling low dword). `serializeString` refuses a payload a reader would
+refuse, for the reason a reader would give, NUL first (`EmbeddedNul`, then
+`InvalidUtf8`): a writer is handed well-formed UTF-8 with no zero byte
+(STANDARD.md string). serialize.go writes such a payload as given; this port
+refuses it, so it can never emit a packet the far side refuses.
 
-**Reads are forgiving only where serialize.go's are and it is nearly free:**
-trailing bits are ignored. Nothing else is forgiven.
+**Reads forgive nothing.** Every value has exactly one encoding (STANDARD.md,
+Reader Obligations): set padding, an out-of-range value, a non-canonical tier,
+a non-finite float, text that is not text and anything after the end (read by
+`serializeEnd`) are all refused.
 
 **Security trumps** (STANDARD.md, Reader Obligations and Implementation Law):
 
-- Every refusal STANDARD.md and serialize.go state is made: past the end,
-  a decoded value outside `[min,max]`, an offset outside its range, nonzero
-  align padding, an int_relative reconstruction outside `[0,2147483647]` or
-  not greater than previous, a string with a NUL or malformed UTF-8 (a
-  hand-written check equal to Go's `utf8.Valid`: overlong forms, surrogates
-  D800-DFFF and values past U+10FFFF refused; Luau's `utf8.len` is not used, it
-  is not that check), a wide string group above 0xFFFF, a zero group, or an
-  unpaired surrogate.
+- Every refusal STANDARD.md and serialize.go state is made, for its stated
+  reason: past the end, a decoded value outside `[min,max]`, an offset outside
+  its range, nonzero align padding, an int_relative reconstruction outside
+  `[0,2147483647]` or not greater than previous (checked first), an absolute
+  tier carrying a difference of 69914 or less (`NonCanonical`), a float or
+  double that is not finite, a compressed float decode that is not finite, a
+  string with a NUL (scanned over the whole payload BEFORE the encoding is
+  checked) or malformed UTF-8 (a hand-written check equal to Go's
+  `utf8.Valid`: overlong forms, surrogates D800-DFFF and values past U+10FFFF
+  refused; Luau's `utf8.len` is not used, it is not that check), and at the
+  end, trailing data before padding.
+- Where two rules meet, the order is the standard's: align padding before a
+  bytes or string payload's length (`NonzeroPadding`, not `PastEnd`); NUL
+  before UTF-8; trailing data before padding; the int_relative domain before
+  the canonical rule.
+- A length off the wire is checked against the bytes left before anything that
+  size is allocated.
 - A refused primitive read leaves its holder unwritten: the value is
   checked, then assigned. A read into a caller's buffer (`serializeBytes`)
   leaves the buffer unspecified, as STANDARD.md allows.
@@ -334,7 +380,7 @@ trailing bits are ignored. Nothing else is forgiven.
 | `src/serialize_int_relative.luau` | int_relative | serialize-luau-int-relative |
 | `src/serialize_float.luau` | float, double; `fround` and the float32 surgery | serialize-luau-float |
 | `src/serialize_compressed_float.luau` | compressed_float, precomputed; `compressedFloatParams` | serialize-luau-compressed-float |
-| `src/serialize_bytes.luau` | bytes, string, wstring | serialize-luau-strings |
+| `src/serialize_bytes.luau` | bytes, string | serialize-luau-strings |
 
 Each card adds its tests in its own `test/<name>/` (one directory per card)
 and any make target in its own `make/<card>.mk`; no two cards edit one file.
@@ -380,12 +426,12 @@ its holder last.
 | fixed | `writeFixed64(s, h, integerBits, fractionBits, min, max)`, `readFixed64`, `measureFixed64`; the same for `Fixed128` |
 | int_relative | `writeIntRelative(s, previous, h)`, `readIntRelative`, `measureIntRelative` |
 | compressed_float | `writeCompressedFloat(s, h, min, max, resolution)`, `readCompressedFloat`, `measureCompressedFloat`; `writeCompressedFloatPrecomputed(s, h, maxIntegerValue, bits, delta, min)`, `readCompressedFloatPrecomputed`, `measureCompressedFloatPrecomputed` |
-| bytes | `writeBytes(s, data)`, `readBytes`, `measureBytes`; `writeString(s, h, bufferSize)`, `readString`, `measureString`; `writeWideString(s, h, bufferSize)`, `readWideString`, `measureWideString` |
+| bytes | `writeBytes(s, data)`, `readBytes`, `measureBytes`; `writeString(s, h, bufferSize)`, `readString`, `measureString` |
 
 For a FIXED-WIDTH method (no parameters, its width the operation's own) the
 split is different. The WRITE arm is the family's, whole:
 `family.write<X>(s, h)`. The READ gate is the stream's: refuse when latched,
-refuse past the end with `Overflow`, and only then call `family.read<X>(s, h)`,
+refuse past the end with `PastEnd`, and only then call `family.read<X>(s, h)`,
 which reads exactly the width with `_readBits`/`_readBits64`, stores the
 value and returns true. The MEASURE arm is the stream's alone (it adds the
 width), so the family exports none.
@@ -399,8 +445,8 @@ width), so the family exports none.
 | `serializeDouble` | float | `writeDouble`, `readDouble` | 64 |
 | `serializeUint128` | int128 | `writeUint128`, `readUint128` | 128 |
 
-The stream itself implements `serializeAlign`, `serializeObject`, `Continue`
-and `Until`; no family is needed for them.
+The stream itself implements `serializeAlign`, `serializeEnd`,
+`serializeObject`, `Continue` and `Until`; no family is needed for them.
 
 ### The other exports
 
@@ -409,7 +455,7 @@ and `Until`; no family is needed for them.
 | bitpacker | `BitWriter`: `new(buffer)`, `reset(buffer)`, `writeBits(value, bits)` (masks, like Go), `writeAlign()`, `writeBytes(data, offset?, count?)`, `flushBits()`, `alignBits()`, `bitsWritten()`, `bitsAvailable()`, `bytesWritten()`, `data()`; `BitReader`: `new(data)`, `reset(data)`, `wouldReadPastEnd(bits)`, `readBits(bits)`, `readAlign()`, `readBytes(data, offset?, count?)`, `alignBits()`, `bitsRead()`, `bitsRemaining()`. Misuse (bits outside [1,32], past the end, unaligned bytes) raises with serialize.go's panic text, as Go's do. `offset` and `count` extend Go's `[]byte` because a buffer has no slices; omitted they are 0 and the buffer's length. The stream calls `new`, `writeBits`, `writeBytes`, `flushBits`, `readBits` and `readBytes` only. |
 | bits | `bitsRequired(min, max)` (numbers, the unsigned domain), `bitsRequired64(min, max)` (integers), `signedToUnsigned(n)`, `unsignedToSigned(n)` |
 | int128 | `Int128`, `Uint128` (a), `bitsRequired128(min, max)` |
-| float | `fround(x)`, `f32bits(x): number` and `f32frombits(u: number): number` (the surgery, (e)) |
+| float | `fround(x)`, `f32bits(x): number` and `f32frombits(u: number): number` ((e)), `floatBitsAreFinite(u: number): boolean` |
 | compressed_float | `compressedFloatParams(min, max, resolution): (maxIntegerValue, bits, delta)` |
 
 ### Dependencies between families
@@ -454,6 +500,21 @@ depends on serialize-luau-bitpacker.
   `ok N test directories` or `FAIL k of N test directories`.
 - Tests use no real time, no sockets, no network and no outside services; a
   test clock, where one is ever needed, is an argument starting at 1000.0.
-- Conformance: a later card reads the vectors from `inputs.luau` and checks
-  every record, byte for byte and refusal for refusal, against this library
-  (STANDARD.md, The vector format).
+- Conformance: test/conformance reads the vectors from `inputs.luau` and
+  checks every record, byte for byte and refusal for refusal, against this
+  library (STANDARD.md, The vector format, What a runner checks): a refused
+  vector must state a reason from the closed list (else the vector is
+  malformed and the run red) and must refuse for exactly that reason, the
+  stream's FIRST; a `writer_input` record hands the writer that float32 and
+  requires the record's bytes; names are unique across the corpus. Each
+  record runs on its own and every failing record is reported by name.
+- THE NEGATIVE CONTROLS: `make controls` (`tools/luaurun -controls`) runs every
+  control of `tools/controls/controls.tsv`. Each builds the conformance unit
+  with ONE refusal rule deleted from a copy of one src file (a needle that must
+  occur exactly once, else the control is red) and requires the corpus run to
+  fail EXACTLY the vectors of `conformance-controls/<name>.expected`;
+  `unknown-operation` instead adds `conformance-controls/unknown-operation.txt`
+  to the corpus, whose one vector must fail. 14 of the reference's 16 controls
+  are carried; ranged-reconstruction and ranged-range are not, because their
+  lists assume C++'s int_relative and string length reads through
+  serialize_int, which this port reads in their own family.

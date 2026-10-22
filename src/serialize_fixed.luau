@@ -6,7 +6,7 @@
 -- whole-unit bounds. The encoding is an offset encoding over the RAW (scaled)
 -- bounds, byte identical to serializeInt64 / serializeInt128 of the raw value
 -- over the raw bounds (STANDARD.md fixed; serialize.go fixedPointParams64/128
--- and SerializeFixed64/128, v1.15.1).
+-- and SerializeFixed64/128, v2.0.0).
 --
 -- This card lands without serialize_bits / serialize_int / serialize_int128
 -- (they are not yet on the base branch), so the helpers this family needs —
@@ -22,10 +22,10 @@ if typeof(integer) ~= "table" then
 	error("serialize: this Luau has no integer type (typeof(integer) is not table); serialize.luau needs Luau 0.741 or later with the integer library (DESIGN.md (c))")
 end
 
--- The latched error kinds (DESIGN.md (a)): serialize.go's ErrOverflow and
--- ErrValueOutOfRange, as strings.
+-- The latched refusal reasons (DESIGN.md (a); STANDARD.md, Refusal reasons),
+-- as the stream spells them.
 local VALUE_OUT_OF_RANGE = "value_out_of_range"
-local OVERFLOW = "overflow"
+local PAST_END = "past_end"
 
 -- Misuse raises: serialize.go's panic text, raised naming the rule (serialize.go
 -- serialize.go panicFixedParams, panicFixedBounds; DESIGN.md (g)).
@@ -196,7 +196,7 @@ local function writeFixed64(self: any, h: { value: integer }, integerBits: numbe
 		return self:_fail(VALUE_OUT_OF_RANGE)
 	end
 	if self:_available() < numBits then
-		return self:_fail(OVERFLOW)
+		return self:_fail(PAST_END)
 	end
 	if numBits > 0 then
 		self:_writeBits64(offset, numBits)
@@ -210,7 +210,7 @@ local function readFixed64(self: any, h: { value: integer }, integerBits: number
 		return false
 	end
 	if self:_available() < numBits then
-		return self:_fail(OVERFLOW)
+		return self:_fail(PAST_END)
 	end
 	local offset = 0i
 	if numBits > 0 then
@@ -248,7 +248,7 @@ local function writeFixed128(self: any, h: { value: U128 }, integerBits: number,
 		return self:_fail(VALUE_OUT_OF_RANGE)
 	end
 	if self:_available() < numBits then
-		return self:_fail(OVERFLOW)
+		return self:_fail(PAST_END)
 	end
 	if numBits > 0 then
 		if numBits <= 64 then
@@ -267,7 +267,7 @@ local function readFixed128(self: any, h: { value: U128 }, integerBits: number, 
 		return false
 	end
 	if self:_available() < numBits then
-		return self:_fail(OVERFLOW)
+		return self:_fail(PAST_END)
 	end
 	local lo = 0i
 	local hi = 0i

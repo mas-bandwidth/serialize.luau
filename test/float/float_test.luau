@@ -1,10 +1,12 @@
 --!strict
 -- float_test.luau — TestSerializeFloat (serialize-luau-float). It runs every
 -- record of conformance/float.txt and conformance/double.txt, comparing BIT
--- PATTERNS (STANDARD.md, "Bit transparency — both directions": a value
--- comparison cannot see a quieted signalling NaN or the sign of zero), and
--- checks fround against a table computed by Go's float32() from a tiny
--- program in .ref (never by the code under test).
+-- PATTERNS (STANDARD.md, "Finite values only, every one bit exact": a value
+-- comparison cannot see the sign of zero or a flushed subnormal) and every
+-- refusal's reason, and checks fround against a table computed by Go's
+-- float32() from a tiny program in .ref (never by the code under test). The
+-- finite rule's write half is pinned here too: a non-finite value, including
+-- a finite double that narrows to an infinity, refuses as non_finite_float.
 
 local serialize = require("./serialize")
 local float = serialize._family("float")
@@ -204,9 +206,11 @@ local function runFloat(): number
 		local r = serialize.ReadStream.new(bytesBuffer(rec.bytes))
 		local h = { value = 12345.0 }
 		local ok = r:serializeFloat(h)
-		if rec.expect == "refused" then
+		local reason = string.match(rec.expect, "^refused (%S+)$")
+		if reason ~= nil then
 			check(not ok, name .. ": expected a refusal")
-			check(r:error() == serialize.SerializeError.Overflow, name .. ": refusal is Overflow")
+			check(h.value == 12345.0, name .. ": a refusal wrote its destination")
+			check(r:error() == reason, name .. ": refused for " .. tostring(r:error()) .. ", the vector states " .. reason)
 		else
 			local want = bits32(rec.expect)
 			check(ok, name .. ": read failed: " .. tostring(r:error()))
@@ -234,9 +238,11 @@ local function runDouble(): number
 		local r = serialize.ReadStream.new(bytesBuffer(rec.bytes))
 		local h = { value = 12345.0 }
 		local ok = r:serializeDouble(h)
-		if rec.expect == "refused" then
+		local reason = string.match(rec.expect, "^refused (%S+)$")
+		if reason ~= nil then
 			check(not ok, name .. ": expected a refusal")
-			check(r:error() == serialize.SerializeError.Overflow, name .. ": refusal is Overflow")
+			check(h.value == 12345.0, name .. ": a refusal wrote its destination")
+			check(r:error() == reason, name .. ": refused for " .. tostring(r:error()) .. ", the vector states " .. reason)
 		else
 			local wantLo, wantHi = bits64(rec.expect)
 			check(ok, name .. ": read failed: " .. tostring(r:error()))
@@ -254,11 +260,52 @@ local function runDouble(): number
 	return #records
 end
 
+-- testFiniteWrites pins the write half of the finite rule (STANDARD.md,
+-- "Finite values only, every one bit exact"): each non-finite value refuses as
+-- non_finite_float, writes nothing and latches; a finite double above FLT_MAX
+-- narrows to an infinity and refuses the same way, while FLT_MAX itself and
+-- the largest double that rounds down to it are written. Negative zero and a
+-- subnormal round trip bit exact.
+local function testFiniteWrites()
+	local NAN = 0 / 0
+	local nonFinite = { NAN, -NAN, math.huge, -math.huge, 3.4028235677973366e+38, -1e39 }
+	for i, value in nonFinite do
+		local w = serialize.WriteStream.new(buffer.create(8))
+		check(not w:serializeFloat({ value = value }), "float non-finite case " .. i .. " was written")
+		check(w:error() == serialize.SerializeError.NonFiniteFloat, "float non-finite case " .. i .. " refused for " .. tostring(w:error()))
+		check(w:bitsProcessed() == 0, "float non-finite case " .. i .. " wrote bits")
+		check(not w:serializeFloat({ value = 1.0 }), "float non-finite case " .. i .. " did not latch")
+	end
+	for i, value in { NAN, -NAN, math.huge, -math.huge } do
+		local w = serialize.WriteStream.new(buffer.create(8))
+		check(not w:serializeDouble({ value = value }), "double non-finite case " .. i .. " was written")
+		check(w:error() == serialize.SerializeError.NonFiniteFloat, "double non-finite case " .. i .. " refused for " .. tostring(w:error()))
+		check(w:bitsProcessed() == 0, "double non-finite case " .. i .. " wrote bits")
+	end
+	for _, value in { 3.4028234663852886e+38, 3.4028235677973362e+38, -0.0, 1.401298464324817e-45 } do
+		local w = serialize.WriteStream.new(buffer.create(8))
+		check(w:serializeFloat({ value = value }), "finite float " .. tostring(value) .. " refused")
+		w:flush()
+		local r = serialize.ReadStream.new(w:data())
+		local h = { value = 0.0 }
+		check(r:serializeFloat(h), "finite float " .. tostring(value) .. " read refused")
+		check(float.f32bits(h.value) == float.f32bits(value), "finite float " .. tostring(value) .. " is not bit exact")
+	end
+	local w = serialize.WriteStream.new(buffer.create(8))
+	check(w:serializeDouble({ value = -0.0 }), "double -0 refused")
+	w:flush()
+	local r = serialize.ReadStream.new(w:data())
+	local h = { value = 0.0 }
+	check(r:serializeDouble(h), "double -0 read refused")
+	local lo, hi = doubleBits(h.value)
+	check(lo == 0 and hi == 0x80000000, "double -0 is not bit exact")
+end
+
 function T.TestSerializeFloat()
 	local floats = runFloat()
 	local doubles = runDouble()
-	check(floats == 18, "float.txt record count is 18")
-	check(doubles == 18, "double.txt record count is 18")
+	check(floats == 22, "float.txt record count is 22")
+	check(doubles == 22, "double.txt record count is 22")
 
 	local cases = 0
 	for _, row in FROUND do
@@ -282,8 +329,10 @@ function T.TestSerializeFloat()
 	local full = serialize.WriteStream.new(buffer.create(8))
 	check(full:serializeFloat({ value = 1.0 }) and full:serializeFloat({ value = 2.0 }), "float writes")
 	check(full:serializeDouble({ value = 1.0 }) == false, "a double past the end refuses")
-	check(full:error() == serialize.SerializeError.Overflow, "the refusal is Overflow")
+	check(full:error() == serialize.SerializeError.PastEnd, "the refusal is PastEnd")
 	check(full:bitsProcessed() == 64, "the refused wide write wrote nothing")
+
+	testFiniteWrites()
 end
 
 return T

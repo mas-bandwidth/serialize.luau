@@ -1,11 +1,11 @@
 --!strict
 -- serialize_stream.luau — the three streams, WriteStream, ReadStream and
 -- MeasureStream (DESIGN.md (a), (g) and (h)), wire compatible with serialize
--- (STANDARD.md, format version 1.1) and serialize.go v1.15.1.
+-- (STANDARD.md, format version 2.0) and serialize.go v2.0.0.
 --
 -- This file holds what every stream shares and no family decides: the latch,
 -- terminality, the bit accounting, the fixed-width read and measure gates,
--- align, object, Continue and Until, and the DISPATCH of every other serialize
+-- align, end, object, Continue and Until, and the DISPATCH of every other serialize
 -- method into its family module. A family module (src/serialize_<name>.luau,
 -- one per card, DESIGN.md (h)) is required LAZILY, on the first call that
 -- needs it, so each family card creates its own file and no two cards edit
@@ -29,13 +29,19 @@ export type Holder<T> = { value: T }
 -- pair read unsigned (DESIGN.md (c)).
 export type Int128 = { lo: integer, hi: integer }
 
--- The error kinds latched on a stream (DESIGN.md (a)): serialize.go's
--- ErrOverflow, ErrValueOutOfRange and ErrAlign, spelled as serialize.js's
--- SerializeError codes.
+-- The refusal reasons latched on a stream (DESIGN.md (a)): the closed list of
+-- STANDARD.md, Refusal reasons, each value spelled exactly as the standard
+-- spells it. The stream latches the FIRST refusal's reason; every later
+-- refusal on a failed stream is an echo that keeps it.
 local SerializeError = table.freeze({
-	Overflow = "overflow",
+	PastEnd = "past_end",
 	ValueOutOfRange = "value_out_of_range",
-	Align = "align",
+	NonzeroPadding = "nonzero_padding",
+	TrailingData = "trailing_data",
+	NonFiniteFloat = "non_finite_float",
+	InvalidUtf8 = "invalid_utf8",
+	EmbeddedNul = "embedded_nul",
+	NonCanonical = "non_canonical",
 })
 
 -- Raise messages for API misuse: serialize.go panics, raised naming the rule
@@ -92,7 +98,8 @@ function Shared.isReading(self: any): boolean
 	return self._kind == "read"
 end
 
--- error returns the first error latched on the stream, or nil.
+-- error returns the first refusal reason latched on the stream (a
+-- SerializeError value, or an object's own error value), or nil.
 function Shared.error(self: any): string?
 	return self._error
 end
@@ -189,13 +196,12 @@ local DISPATCH: { { string } } = {
 	{ "serializeCompressedFloatPrecomputed", "compressed_float", "CompressedFloatPrecomputed" },
 	{ "serializeBytes", "bytes", "Bytes" },
 	{ "serializeString", "bytes", "String" },
-	{ "serializeWideString", "bytes", "WideString" },
 }
 
 -- THE FIXED WIDTHS (DESIGN.md (h)): methods with no parameters whose width is
 -- the operation's own (STANDARD.md bits, bool, uint128, float, double). The
 -- write arm is the family's, whole. The READ gate is the stream's: refuse on
--- a latched stream, refuse past the end (overflow), and only then call
+-- a latched stream, refuse past the end (PastEnd), and only then call
 -- family.read<Suffix>(stream, holder), which reads exactly that many bits
 -- and stores the value. The MEASURE arm is the stream's alone: the width.
 local FIXED: { { any } } = {
@@ -313,10 +319,17 @@ function WriteStream.serializeAlign(self: any): boolean
 		return true
 	end
 	if self._bits + n > self._numBits then
-		return self:_fail(SerializeError.Overflow)
+		return self:_fail(SerializeError.PastEnd)
 	end
 	self:_writeBits(0, n)
 	return true
+end
+
+-- serializeEnd writes the end of the object, which is nothing at all
+-- (STANDARD.md end): the writer leaves the final byte's unused bits zero.
+-- A latched stream refuses.
+function WriteStream.serializeEnd(self: any): boolean
+	return self._error == nil
 end
 
 -- flush writes out the partially filled scratch word (STANDARD.md General
@@ -352,7 +365,7 @@ for _, row in FIXED do
 			return false
 		end
 		if self._bits + width > self._numBits then
-			return self:_fail(SerializeError.Overflow)
+			return self:_fail(SerializeError.PastEnd)
 		end
 		return family(name)[arm](self, holder)
 	end
@@ -415,7 +428,7 @@ function ReadStream._readBytes(self: any, dst: buffer, offset: number, count: nu
 end
 
 -- serializeAlign skips to the next byte boundary, refusing nonzero padding
--- with Align (STANDARD.md align). A latched stream refuses even when aligned
+-- with NonzeroPadding (STANDARD.md align). A latched stream refuses even when aligned
 -- (STANDARD.md, Reader Obligations: zero-bit reads included).
 function ReadStream.serializeAlign(self: any): boolean
 	if self._error ~= nil then
@@ -426,10 +439,33 @@ function ReadStream.serializeAlign(self: any): boolean
 		return true
 	end
 	if self._bits + n > self._numBits then
-		return self:_fail(SerializeError.Overflow)
+		return self:_fail(SerializeError.PastEnd)
 	end
 	if self:_readBits(n) ~= 0 then
-		return self:_fail(SerializeError.Align)
+		return self:_fail(SerializeError.NonzeroPadding)
+	end
+	return true
+end
+
+-- serializeEnd reads the end of the object (STANDARD.md end): call it after
+-- the last field of the top-level object a packet carries. A failed stream
+-- refuses with its first reason; a whole byte or more left over is
+-- TrailingData, checked first; otherwise the 0 to 7 bits left are the final
+-- byte's padding, and a set bit among them is NonzeroPadding. An accepted end
+-- leaves the stream exactly consumed.
+function ReadStream.serializeEnd(self: any): boolean
+	if self._error ~= nil then
+		return false
+	end
+	local remaining = self._numBits - self._bits
+	if remaining >= 8 then
+		return self:_fail(SerializeError.TrailingData)
+	end
+	-- fewer than 8 bits remain here, so this is all of them: the final byte's
+	-- padding
+	local paddingBits = remaining % 8
+	if paddingBits > 0 and self:_readBits(paddingBits) ~= 0 then
+		return self:_fail(SerializeError.NonzeroPadding)
 	end
 	return true
 end
@@ -475,6 +511,11 @@ end
 
 function MeasureStream.serializeAlign(self: any): boolean
 	return self:_measure(7)
+end
+
+-- serializeEnd costs nothing (STANDARD.md end).
+function MeasureStream.serializeEnd(self: any): boolean
+	return self:_measure(0)
 end
 
 -- ---------------------------------------------------------------------------

@@ -6,8 +6,10 @@
 -- It pins:
 --   1. every record of conformance/compressed_float.txt as a reader must:
 --      accepted vectors decode bit-exactly and consume exactly `consumed`
---      bits; refused vectors leave the destination untouched and the stream
---      terminal. The record count is printed and must equal the file's count;
+--      bits; refused vectors refuse for their stated reason, leave the
+--      destination untouched and the stream terminal; a record carrying
+--      writer_input hands the writer that float32 and requires the record's
+--      bytes. The record count is printed and must equal the file's count;
 --   2. the writer's integer clamp witnesses (STANDARD.md compressed_float,
 --      "The integer clamp is normative"): [0, 8388609] and [0, 16777215] at
 --      resolution 1, writing max, emit the largest legal code, not one past;
@@ -16,7 +18,11 @@
 --      and 9.995 -> 1000 (a widened writer yields 0, 2, 10, 999);
 --   4. serialize.go's TestCompressedFloatValidation misuse rules: min >= max
 --      or resolution <= 0 raises; bad precomputed constants raise; a
---      non-finite write raises.
+--      non-finite write raises;
+--   5. the finite decode (STANDARD.md compressed_float, "The decode must be
+--      finite"): over [3*2^103, FLT_MAX] at resolution 2^104 the top integer
+--      decodes to +inf, which a reader refuses as non_finite_float with its
+--      destination untouched, and a writer raises on that declaration.
 
 local serialize = require("./serialize")
 local WriteStream = serialize.WriteStream
@@ -41,6 +47,12 @@ local function f32bits(x: number): number
 	local b = buffer.create(4)
 	buffer.writef32(b, 0, x)
 	return buffer.readu32(b, 0)
+end
+
+local function f32frombits(u: number): number
+	local b = buffer.create(4)
+	buffer.writeu32(b, 0, u)
+	return buffer.readf32(b, 0)
 end
 
 local function hexBytes(s: string): { number }
@@ -90,11 +102,23 @@ local function parseRecords(text: string): { any }
 			elseif key == "bytes" then
 				current.bytesText = val
 			elseif key == "expect" then
-				if val == "refused" then
+				local reason = val:match("^refused (%S+)$")
+				if reason ~= nil then
 					current.refused = true
+					current.reason = reason
 				else
-					current.expectBits = tonumber(val:match("0x(%x+)"), 16)
+					local hex = val:match("^bits = 0x(%x+)$")
+					if hex == nil then
+						error("bad expect line in " .. tostring(current.name) .. ": " .. val)
+					end
+					current.expectBits = tonumber(hex, 16)
 				end
+			elseif key == "writer_input" then
+				local hex = val:match("^bits = 0x(%x+)$")
+				if hex == nil then
+					error("bad writer_input line in " .. tostring(current.name) .. ": " .. val)
+				end
+				current.writerInput = tonumber(hex, 16)
 			elseif key == "consumed" then
 				current.consumed = tonumber(val)
 			end
@@ -115,6 +139,9 @@ local function runRecord(rec: any)
 		end
 		if h.value ~= sentinel then
 			error("refusal changed destination for " .. rec.name)
+		end
+		if rs:error() ~= rec.reason then
+			error(rec.name .. ": refused for " .. tostring(rs:error()) .. ", the vector states " .. tostring(rec.reason))
 		end
 		local bitsBefore = rs:bitsProcessed()
 		local h2 = { value = 777.0 }
@@ -140,9 +167,25 @@ local function runRecord(rec: any)
 			error("bits mismatch for " .. rec.name .. ": " .. string.format("0x%08X", got) .. " ~= " .. string.format("0x%08X", rec.expectBits))
 		end
 	end
+	if rec.writerInput ~= nil then
+		local w = WriteStream.new(buffer.create(8))
+		if not w:serializeCompressedFloat({ value = f32frombits(rec.writerInput) }, rec.min, rec.max, rec.res) then
+			error("writer_input write refused for " .. rec.name)
+		end
+		w:flush()
+		local got = w:data()
+		local want = hexBytes(rec.bytesText)
+		local same = buffer.len(got) == #want
+		for i = 1, #want do
+			same = same and buffer.readu8(got, i - 1) == want[i]
+		end
+		if not same then
+			error("writer_input bytes mismatch for " .. rec.name)
+		end
+	end
 end
 
-local EXPECTED_RECORDS = 29
+local EXPECTED_RECORDS = 36
 
 local function testConformance()
 	local text = require("./inputs").compressed_float
@@ -297,12 +340,63 @@ local function testRoundTripAndMeasure()
 	end
 end
 
+-- The finite decode witness (STANDARD.md compressed_float, "The decode must
+-- be finite"): [3*2^103, FLT_MAX] at resolution 2^104 has delta 2^128 - 2^105
+-- and 24 bits; the top integer 2^24 - 2 decodes to 2^128, +inf. The reader
+-- refuses it as non_finite_float with its destination untouched; the integer
+-- below it decodes finite and is accepted. The writer raises on the whole
+-- declaration, even for a value that would decode finite.
+local function testFiniteDecode()
+	local min = 3 * 2 ^ 103
+	local max = f32frombits(0x7F7FFFFF)
+	local res = 2 ^ 104
+	local maxIntegerValue, bits = serialize.compressedFloatParams(min, max, res)
+	if maxIntegerValue ~= 2 ^ 24 - 2 or bits ~= 24 then
+		error("finite decode witness params " .. maxIntegerValue .. " " .. bits, 2)
+	end
+	local function readCode(code: number): (boolean, number, any)
+		local b = buffer.create(3)
+		buffer.writeu8(b, 0, code % 256)
+		buffer.writeu8(b, 1, (code // 256) % 256)
+		buffer.writeu8(b, 2, code // 65536)
+		local r = ReadStream.new(b)
+		local h = { value = 12345.0 }
+		local ok = r:serializeCompressedFloat(h, min, max, res)
+		return ok, h.value, r
+	end
+	local ok, value, r = readCode(maxIntegerValue)
+	if ok or value ~= 12345.0 then
+		error("a decode to +inf was accepted or wrote its destination", 2)
+	end
+	if r:error() ~= serialize.SerializeError.NonFiniteFloat then
+		error("a decode to +inf refused for " .. tostring(r:error()) .. ", want non_finite_float", 2)
+	end
+	local h2 = { value = 1.0 }
+	if r:serializeCompressedFloat(h2, min, max, res) or r:error() ~= serialize.SerializeError.NonFiniteFloat then
+		error("the stream is not terminal after a non-finite decode, or lost its first reason", 2)
+	end
+	local okBelow, below = readCode(maxIntegerValue - 1)
+	if not okBelow or below ~= below or below == math.huge then
+		error("the integer below the top did not decode finite", 2)
+	end
+	raises(function()
+		local w = WriteStream.new(buffer.create(8))
+		w:serializeCompressedFloat({ value = min }, min, max, res)
+	end, "top integer must decode to a finite float32")
+	raises(function()
+		local w = WriteStream.new(buffer.create(8))
+		local mi, b, d = serialize.compressedFloatParams(min, max, res)
+		w:serializeCompressedFloatPrecomputed({ value = min }, mi, b, d, min)
+	end, "top integer must decode to a finite float32")
+end
+
 function T.TestSerializeCompressedFloat()
 	testConformance()
 	testTopOfRangeClamp()
 	testWriterTwoRoundings()
 	testValidation()
 	testRoundTripAndMeasure()
+	testFiniteDecode()
 end
 
 return T

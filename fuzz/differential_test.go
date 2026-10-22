@@ -1,14 +1,17 @@
 // Package fuzz holds the differential fuzz test for the Luau serialize port
 // (DESIGN.md; this card). TestDifferentialAgainstSerializeGo generates random
-// programs from a fixed seed, writes them with serialize.go v1.15.1 and with the
+// programs from a fixed seed, writes them with serialize.go v2.0.0 and with the
 // Luau port via fuzz/driver.luau, and compares bytes, read-back traces and
-// mutated-read decisions. TestDifferentialNegativeControl sets a test-only flag
+// mutated-read decisions. Every read ends with SerializeEnd (STANDARD.md end),
+// and a refusal is traced with its reason (STANDARD.md, Refusal reasons), so
+// the two readers must agree on the reason as well as the decision. TestDifferentialNegativeControl sets a test-only flag
 // that makes the Go side write one int range one bit wider and asserts the
 // harness catches the divergence (the negative control must go red without it).
 package fuzz
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -19,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	serialize "github.com/mas-bandwidth/serialize.go"
+	serialize "github.com/mas-bandwidth/serialize.go/v2"
 )
 
 const (
@@ -119,7 +122,7 @@ func genProgram(r *rand.Rand) program {
 	var steps []step
 	for k := 0; k < n; k++ {
 		op := pick(r, []string{"b", "b64", "bl", "u8", "u16", "u32", "u64", "i", "i64",
-			"i128", "u128", "ir", "f", "d", "fx", "f128", "cf", "by", "s", "ws", "al", "ob"})
+			"i128", "u128", "ir", "f", "d", "fx", "f128", "cf", "by", "s", "al", "ob"})
 		st := step{op: op}
 		switch op {
 		case "b":
@@ -262,29 +265,37 @@ func genProgram(r *rand.Rand) program {
 			cur := prev + int32(1+r.Uint64()%uint64(0x7fffffff-int32(prev)))
 			st.words = []uint32{uint32(prev), uint32(cur)}
 		case "f":
+			// finite only (STANDARD.md, "Finite values only"): a writer is never
+			// handed NaN or an infinity; a mutated read meets them instead.
 			u := r.Uint32()
 			switch r.IntN(10) {
 			case 0:
-				u = 0x7fc00000 | (r.Uint32() & 0x3fffff) // NaN with payload
+				u = r.Uint32() & 0x807fffff // a subnormal, either sign
 			case 1:
-				u = 0x7f800000 // +inf
+				u = 0x7f7fffff // FLT_MAX
 			case 2:
-				u = 0xff800000 // -inf
+				u = 0xff7fffff // -FLT_MAX
 			case 3:
 				u = 0x80000000 // -0
+			}
+			if u&0x7f800000 == 0x7f800000 {
+				u &^= 0x00800000
 			}
 			st.words = []uint32{u}
 		case "d":
 			u := r.Uint64()
 			switch r.IntN(10) {
 			case 0:
-				u = 0x7ff8000000000000 | (r.Uint64() & 0xfffffffffffff)
+				u = r.Uint64() & 0x800fffffffffffff
 			case 1:
-				u = 0x7ff0000000000000
+				u = 0x7fefffffffffffff
 			case 2:
-				u = 0xfff0000000000000
+				u = 0xffefffffffffffff
 			case 3:
 				u = 0x8000000000000000
+			}
+			if u&0x7ff0000000000000 == 0x7ff0000000000000 {
+				u &^= 0x0010000000000000
 			}
 			lo, hi := w64(u)
 			st.words = []uint32{lo, hi}
@@ -296,19 +307,18 @@ func genProgram(r *rand.Rand) program {
 			}
 			st.hex = hexEncode(b)
 		case "s":
+			// real text, well formed with no NUL (STANDARD.md string): ASCII
+			// and one- to four-byte characters, so a mutated read meets every
+			// UTF-8 refusal
 			st.bufsize = 2 + r.IntN(100)
 			l := 1 + r.IntN(st.bufsize-1)
-			b := make([]byte, l)
-			for i := range b {
-				b[i] = byte('a' + r.IntN(26))
-			}
-			st.hex = hexEncode(b)
-		case "ws":
-			st.bufsize = 2 + r.IntN(100)
-			l := 1 + r.IntN(st.bufsize-1)
-			b := make([]byte, l)
-			for i := range b {
-				b[i] = byte('a' + r.IntN(26))
+			var b []byte
+			for len(b) < l {
+				c := []byte(pick(r, textPool))
+				if len(b)+len(c) > l {
+					c = []byte{byte('a' + r.IntN(26))}
+				}
+				b = append(b, c...)
 			}
 			st.hex = hexEncode(b)
 		case "ob":
@@ -337,14 +347,29 @@ func genProgram(r *rand.Rand) program {
 	return p
 }
 
+// textPool is the characters a generated string is made of: ASCII, a two-byte
+// accent, a combining mark, CJK, Korean, Arabic, U+FFFF, an emoji and the
+// largest code point.
+var textPool = []string{"a", "z", "/", "\u00e9", "e\u0301", "\u7881", "\uBC14", "\u0627", "\uFFFF", "\U0001F600", "\U0010FFFF"}
+
 // expectedTrace builds the canonical trace a successful read of the program's
-// own values must produce.
+// own values must produce, ending with Z, the accepted end.
 func expectedTrace(p program) string {
 	var toks []string
 	for _, st := range p.steps {
 		toks = append(toks, canonicalOf(st))
 	}
+	toks = append(toks, "Z")
 	return strings.Join(toks, " ")
+}
+
+// refusalTok is a refusal in a trace: E and the reason as STANDARD.md spells it.
+func refusalTok(err error) string {
+	var r serialize.Refusal
+	if errors.As(err, &r) {
+		return "E:" + r.String()
+	}
+	return "E:" + err.Error()
 }
 
 func canonicalOf(st step) string {
@@ -375,8 +400,6 @@ func canonicalOf(st step) string {
 		return "B" + st.hex
 	case "s":
 		return "S" + st.hex
-	case "ws":
-		return "W" + st.hex
 	case "al":
 		return "A"
 	case "ob":
@@ -467,9 +490,6 @@ func goWrite(s *serialize.WriteStream, st step) {
 	case "s":
 		v := string(hexDecode(st.hex))
 		s.SerializeString(&v, st.bufsize)
-	case "ws":
-		v := string(hexDecode(st.hex))
-		s.SerializeWideString(&v, st.bufsize)
 	case "al":
 		s.SerializeAlign()
 	case "ob":
@@ -525,10 +545,15 @@ func goRead(data []byte, p program) string {
 	for _, st := range p.steps {
 		tok, ok := readOne(s, st)
 		if !ok {
-			toks = append(toks, "E")
-			break
+			toks = append(toks, refusalTok(s.Err()))
+			return strings.Join(toks, " ")
 		}
 		toks = append(toks, tok)
+	}
+	if err := s.SerializeEnd(); err != nil {
+		toks = append(toks, refusalTok(err))
+	} else {
+		toks = append(toks, "Z")
 	}
 	return strings.Join(toks, " ")
 }
@@ -629,10 +654,6 @@ func readOne(s *serialize.ReadStream, st step) (string, bool) {
 		v := ""
 		err = s.SerializeString(&v, st.bufsize)
 		return "S" + hexEncode([]byte(v)), err == nil
-	case "ws":
-		v := ""
-		err = s.SerializeWideString(&v, st.bufsize)
-		return "W" + hexEncode([]byte(v)), err == nil
 	case "al":
 		err = s.SerializeAlign()
 		return "A", err == nil
@@ -761,8 +782,8 @@ func buildBatchText(programs []program) string {
 func (st step) text() string {
 	var sb strings.Builder
 	sb.WriteString(st.op)
-	if st.op == "by" || st.op == "s" || st.op == "ws" {
-		if st.op == "s" || st.op == "ws" {
+	if st.op == "by" || st.op == "s" {
+		if st.op == "s" {
 			sb.WriteString(" " + strconv.Itoa(st.bufsize))
 		}
 		sb.WriteString(" " + st.hex)

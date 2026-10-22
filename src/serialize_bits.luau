@@ -2,8 +2,8 @@
 -- serialize_bits.luau — the bits family (DESIGN.md (a), (b), (c), (g) and
 -- (h)): serializeBits, serializeBits64, bool and the fixed-width unsigned
 -- helpers uint8/16/32/64, plus bitsRequired, bitsRequired64 and the zig-zag
--- helpers, wire compatible with serialize (STANDARD.md, format version 1.1)
--- and serialize.go v1.15.1 write_stream.go, read_stream.go and measure_stream.go.
+-- helpers, wire compatible with serialize (STANDARD.md, format version 2.0)
+-- and serialize.go v2.0.0 write_stream.go, read_stream.go and measure_stream.go.
 --
 -- The writer is STRICT: it emits exactly serialize.go's bytes, and where
 -- serialize.go's WriteStream refuses (a full buffer) this port latches the
@@ -18,11 +18,11 @@
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 
--- SerializeError kinds as the stream latches them (DESIGN.md (a)).
-local OVERFLOW = "overflow"
+-- The refusal reason the stream latches (DESIGN.md (a); STANDARD.md, Refusal reasons).
+local PAST_END = "past_end"
 
 -- Raise messages for API misuse: serialize.go's panic strings (serialize.go
--- v1.15.1 serialize.go; DESIGN.md (g)).
+-- v2.0.0 serialize.go; DESIGN.md (g)).
 local RAISE_BITS_RANGE = "serialize: bits must be in [1,32]"
 local RAISE_BITS_RANGE64 = "serialize: bits must be in [1,64]"
 
@@ -43,7 +43,7 @@ function M.writeBits(s: any, h: any, bits: number): boolean
 		return false
 	end
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	local mask = (2 ^ bits) - 1
 	s:_writeBits(bit32.band(h.value, mask), bits)
@@ -58,7 +58,7 @@ function M.readBits(s: any, h: any, bits: number): boolean
 		return false
 	end
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	h.value = s:_readBits(bits)
 	return true
@@ -82,7 +82,7 @@ function M.writeBits64(s: any, h: any, bits: number): boolean
 		return false
 	end
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	s:_writeBits64(h.value, bits)
 	return true
@@ -96,7 +96,7 @@ function M.readBits64(s: any, h: any, bits: number): boolean
 		return false
 	end
 	if s:_available() < bits then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	h.value = s:_readBits64(bits)
 	return true
@@ -121,7 +121,7 @@ function M.writeBool(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 1 then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	s:_writeBits(h.value and 1 or 0, 1)
 	return true
@@ -137,7 +137,7 @@ function M.writeUint8(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 8 then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	s:_writeBits(h.value, 8)
 	return true
@@ -153,7 +153,7 @@ function M.writeUint16(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 16 then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	s:_writeBits(h.value, 16)
 	return true
@@ -169,7 +169,7 @@ function M.writeUint32(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 32 then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	s:_writeBits(h.value, 32)
 	return true
@@ -185,7 +185,7 @@ function M.writeUint64(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 64 then
-		return s:_fail(OVERFLOW)
+		return s:_fail(PAST_END)
 	end
 	s:_writeBits64(h.value, 64)
 	return true

@@ -1,10 +1,12 @@
 --!strict
--- golden_wire_test.luau — TestGoldenWireFormat: serialize.go's
--- TestGoldenWireFormat golden bytes (goldenWireBytes in .ref/serialize.go/
--- serialize_test.go, pasted below as literals) are read and re-written byte
--- for byte, and every single-bit flip of a consumed bit is refused or decoded
--- differently (STANDARD.md, the golden message and "Bit transparency — both
--- directions").
+-- golden_wire_test.luau — TestGoldenWireFormat: serialize.go v2.0.0's
+-- TestGoldenWireFormat golden bytes (goldenWireBytes in serialize.go's
+-- serialize_test.go, the 106-byte whole message STANDARD.md prints, pasted
+-- below as literals) are read and re-written byte for byte, the read ending
+-- with serializeEnd, which consumes the final byte's padding; every
+-- single-bit flip of the message is refused or decoded differently
+-- (STANDARD.md, "The whole message", end and "Every value has exactly one
+-- encoding").
 
 local serialize = require("./serialize")
 
@@ -17,15 +19,14 @@ local goldenBytes = {
 	0x52, 0xBC, 0xDA, 0x0F, 0x49, 0x40, 0xF4, 0x55, 0x55, 0x55, 0x55, 0x55,
 	0x55, 0x55, 0xFF, 0xFC, 0xD1, 0x48, 0xE0, 0x59, 0xD1, 0x48, 0xC0, 0x7B,
 	0xF3, 0x6A, 0xE2, 0x59, 0xD1, 0x48, 0x84, 0xB7, 0x06, 0xDE, 0xAD, 0xBE,
-	0xEF, 0xCA, 0xFE, 0x01, 0x06, 0x67, 0x6F, 0x6C, 0x64, 0x65, 0x6E, 0xE3,
-	0x21, 0x00, 0x00, 0xC0, 0x21, 0x00, 0x00, 0x00, 0x22, 0x00, 0x00, 0x00,
-	0xC0, 0x60, 0x00, 0x80, 0xA2, 0x7C, 0xFC, 0xEC, 0x26, 0xCB, 0xFF, 0xFF,
-	0x4B, 0x1D, 0x1F, 0xEF, 0xD2, 0x1A, 0x1F, 0x01, 0xE9, 0xFF, 0xFF, 0x09,
-	0x19, 0x2A, 0x3B, 0x4C, 0x5D, 0x6E, 0x7F, 0x78, 0x6F, 0x5E, 0x4D, 0x3C,
-	0x2B, 0x1A, 0x09, 0x04,
+	0xEF, 0xCA, 0xFE, 0x01, 0x06, 0x67, 0x6F, 0x6C, 0x64, 0x65, 0x6E, 0x06,
+	0xE7, 0xA2, 0x81, 0xE7, 0x9F, 0xB3, 0xC0, 0x60, 0x00, 0x80, 0xA2, 0x7C,
+	0xFC, 0xEC, 0x26, 0xCB, 0xFF, 0xFF, 0x4B, 0x1D, 0x1F, 0xEF, 0xD2, 0x1A,
+	0x1F, 0x01, 0xE9, 0xFF, 0xFF, 0x09, 0x19, 0x2A, 0x3B, 0x4C, 0x5D, 0x6E,
+	0x7F, 0x78, 0x6F, 0x5E, 0x4D, 0x3C, 0x2B, 0x1A, 0x09, 0x04,
 }
 
-local CONSUMED_BITS = 891
+local CONSUMED_BITS = 106 * 8
 local MIN_INT64 = integer.lshift(1i, 63i)
 local MAX_INT64 = integer.sub(integer.lshift(1i, 63i), 1i)
 
@@ -63,7 +64,7 @@ local function goldenData()
 		uint8Value = 0, uint16Value = 0, uint32Value = 0, uint64Value = 0i,
 		relativeNear = 0, relativeFar = 0,
 		bytes = { 0, 0, 0, 0, 0, 0, 0 },
-		str = "", wstr = "",
+		str = "", text = "",
 		fixedQ8_8 = 0i, fixedQ16_16 = 0i, fixedQ48_16 = 0i, fixedQ16_16Unsigned = 0i,
 		fixedQ112_16Wide = Int128.new(0i, 0i), fixedQ64_64Wide = Int128.new(0i, 0i),
 	}
@@ -89,7 +90,7 @@ local function expectedData()
 	d.relativeFar = 2100
 	d.bytes = { 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0x01 }
 	d.str = "golden"
-	d.wstr = "мир"
+	d.text = "\u{7881}\u{77F3}"
 	d.fixedQ8_8 = -832i
 	d.fixedQ16_16 = 80904192i
 	d.fixedQ48_16 = -3559993401i
@@ -108,7 +109,7 @@ local function same(a: any, b: any): boolean
 	for i = 1, 7 do
 		if a.bytes[i] ~= b.bytes[i] then return false end
 	end
-	if a.str ~= b.str or a.wstr ~= b.wstr then return false end
+	if a.str ~= b.str or a.text ~= b.text then return false end
 	if a.fixedQ8_8 ~= b.fixedQ8_8 or a.fixedQ16_16 ~= b.fixedQ16_16 or a.fixedQ48_16 ~= b.fixedQ48_16 or a.fixedQ16_16Unsigned ~= b.fixedQ16_16Unsigned then return false end
 	if Int128.cmp(a.fixedQ112_16Wide, b.fixedQ112_16Wide) ~= 0 then return false end
 	if Int128.cmp(a.fixedQ64_64Wide, b.fixedQ64_64Wide) ~= 0 then return false end
@@ -183,9 +184,9 @@ local function drive(stream: any, d: any): boolean
 	local hStr = { value = d.str }
 	step(stream.serializeString, hStr, 16)
 	d.str = hStr.value
-	local hWstr = { value = d.wstr }
-	step(stream.serializeWideString, hWstr, 8)
-	d.wstr = hWstr.value
+	local hText = { value = d.text }
+	step(stream.serializeString, hText, 8)
+	d.text = hText.value
 	step(stream.serializeAlign, { value = nil })
 	local hF8 = { value = d.fixedQ8_8 }
 	step(stream.serializeFixed64, hF8, 8, 8, -100i, 100i)
@@ -206,6 +207,7 @@ local function drive(stream: any, d: any): boolean
 	local hW64 = { value = d.fixedQ64_64Wide }
 	step(stream.serializeFixed128, hW64, 64, 64, MIN_INT64, MAX_INT64)
 	d.fixedQ64_64Wide = hW64.value
+	if ok then ok = stream:serializeEnd() end
 	return ok
 end
 
@@ -230,6 +232,16 @@ function T.TestGoldenWireFormat()
 		local r = serialize.ReadStream.new(bytesToBuffer(goldenBytes))
 		check(drive(r, d), "golden read was refused")
 		check(same(d, expected), "golden read decode differs")
+		check(r:bitsProcessed() == CONSUMED_BITS, "the golden read's end left the stream at " .. r:bitsProcessed() .. " bits")
+	end
+
+	-- a zero byte appended after the message is trailing data at the end
+	do
+		local extended = table.clone(goldenBytes)
+		extended[#extended + 1] = 0
+		local r = serialize.ReadStream.new(bytesToBuffer(extended))
+		check(not drive(r, goldenData()), "a zero byte after the message was accepted")
+		check(r:error() == serialize.SerializeError.TrailingData, "a zero byte after the message refused for " .. tostring(r:error()))
 	end
 
 	-- every single-bit flip of a consumed bit is refused or decoded differently
