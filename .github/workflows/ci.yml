@@ -41,6 +41,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Unit tests of the runner
+        run: make test-luaurun
+
       - name: Negative controls
         run: make controls
 
