@@ -24,6 +24,11 @@
 // Usage: luaurun -root <repo> [name...]; no names runs every test/*/.
 // The interpreter is $LUAU, else <repo>/dist/luau-0.741/luau.
 //
+// THE CORPUS ROOT: the directory holding conformance/ and conformance-controls/.
+// It is <repo> (the vendored copy) unless $SERIALIZE_CORPUS_DIR names another
+// one, which is how the nightly functional test points the runner at
+// mas-bandwidth/serialize main.
+//
 // THE NEGATIVE CONTROLS (STANDARD.md, "A gate nobody has seen go red"):
 // luaurun -root <repo> -controls runs every control of
 // tools/controls/controls.tsv. Each builds build/run/control-<name>/ as the
@@ -58,6 +63,9 @@ func main() {
 	root := flag.String("root", ".", "the repository root")
 	controls := flag.Bool("controls", false, "run the negative controls of tools/controls/controls.tsv")
 	flag.Parse()
+	if dir := os.Getenv("SERIALIZE_CORPUS_DIR"); dir != "" {
+		fmt.Fprintf(os.Stdout, "luaurun: corpus root %s\n", corpusDir(*root))
+	}
 	if *controls {
 		os.Exit(runControls(*root, os.Stdout, os.Stderr))
 	}
@@ -134,6 +142,20 @@ func interpreter(root string) (string, string) {
 	return p, ""
 }
 
+// corpusRoot is the corpus root for a $SERIALIZE_CORPUS_DIR value: unset or
+// empty is the repository root.
+func corpusRoot(root, value string) string {
+	if value == "" {
+		return root
+	}
+	return value
+}
+
+// corpusDir is the corpus root this run reads.
+func corpusDir(root string) string {
+	return corpusRoot(root, os.Getenv("SERIALIZE_CORPUS_DIR"))
+}
+
 var validName = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 // runDir builds build/run/<name>/ and runs its tests, reporting success.
@@ -202,7 +224,7 @@ func runUnit(root, luau string, u runSpec, stdout, stderr io.Writer) bool {
 			return false
 		}
 	}
-	inputs, err := inputsModule(filepath.Join(root, "conformance"), u.extra)
+	inputs, err := inputsModule(filepath.Join(corpusDir(root), "conformance"), u.extra)
 	if err != nil {
 		fmt.Fprintf(stderr, "luaurun: %v\n", err)
 		return false
@@ -371,7 +393,7 @@ func runControls(root string, stdout, stderr io.Writer) int {
 	for _, name := range order {
 		u := runSpec{label: "control " + name, dir: "control-" + name, testDir: testDir, tests: tests, control: name}
 		if name == "unknown-operation" {
-			text, err := os.ReadFile(filepath.Join(root, "conformance-controls", "unknown-operation.txt"))
+			text, err := os.ReadFile(filepath.Join(corpusDir(root), "conformance-controls", "unknown-operation.txt"))
 			if err != nil {
 				fmt.Fprintf(stdout, "FAIL control %s: %v\n", name, err)
 				failed++
@@ -386,7 +408,7 @@ func runControls(root string, stdout, stderr io.Writer) int {
 			}
 			u.expected = strings.Join(names, "\n") + "\n"
 		} else {
-			expected, err := os.ReadFile(filepath.Join(root, "conformance-controls", name+".expected"))
+			expected, err := os.ReadFile(filepath.Join(corpusDir(root), "conformance-controls", name+".expected"))
 			if err != nil {
 				fmt.Fprintf(stdout, "FAIL control %s: %v\n", name, err)
 				failed++
