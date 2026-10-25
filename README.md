@@ -24,6 +24,8 @@ DESIGN.md is the design: the API, the refusal reasons, the bit order, the number
     make test T=smoke   # one test directory
     make controls       # the negative controls: each must fail exactly its list
     make fuzz           # the differential fuzz against serialize.go v2.0.0
+    make fuzz-neg       # its negative control: -widen-int must make it go red
+    make fuzz-extended FUZZ_SEED=S FUZZ_DURATION=3600s   # the nightly run
     tools/revendor/revendor.sh v2.0.0   # re-vendor the standard and the corpus
 
 BSD 3-Clause license.
