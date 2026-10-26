@@ -56,10 +56,20 @@ $(LUAURUN): tools/luaurun/main.go tools/luaurun/go.mod
 	@mkdir -p build
 	cd tools/luaurun && $(GO) build -o ../../$(LUAURUN) .
 
-# analyze runs luau-analyze over every src file (all are --!strict) and fails
-# on any error it reports.
+# analyze runs pinned luau-analyze over every src file (all are --!strict).
+# Luau 0.741's --formatter=gnu is the diagnostic contract: a clean tree prints
+# nothing and exits 0. LocalUnused is a diagnostic that still exits 0, so a
+# nonempty log is a refusal. The log is printed either way, and a nonzero
+# status is preserved.
 analyze: toolchain-luau
-	@$(LUAU_ANALYZE) src/*.luau
+	@mkdir -p build
+	@status=0; $(LUAU_ANALYZE) --formatter=gnu src/*.luau >build/analyze.log 2>&1 || status=$$?; \
+	cat build/analyze.log; \
+	if [ $$status -ne 0 ]; then exit $$status; fi; \
+	if [ -s build/analyze.log ]; then \
+		echo "analyze REFUSES: luau-analyze --formatter=gnu wrote diagnostics and exited $$status"; \
+		exit 1; \
+	fi
 
 # test: the analyzer first, then the runner over test/$(T)/ (or every test
 # directory). A missing or empty test/<name>/ fails, naming it: never a skip.
