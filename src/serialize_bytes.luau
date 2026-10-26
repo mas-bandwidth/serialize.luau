@@ -18,7 +18,6 @@ local Stream = require("./serialize_stream")
 
 local PastEnd = Stream.SerializeError.PastEnd
 local ValueOutOfRange = Stream.SerializeError.ValueOutOfRange
-local NonzeroPadding = Stream.SerializeError.NonzeroPadding
 local InvalidUtf8 = Stream.SerializeError.InvalidUtf8
 local EmbeddedNul = Stream.SerializeError.EmbeddedNul
 
