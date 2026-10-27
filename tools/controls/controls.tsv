@@ -6,7 +6,7 @@
 # corpus run against it must fail exactly the vectors of conformance-controls/<name>.expected. unknown-operation patches nothing: it adds
 # conformance-controls/unknown-operation.txt to the corpus, whose one vector must fail.
 #
-# Carried: all 17 controls the reference names. The ranged rules are kept in three places here
+# Carried: all 19 controls the reference names (v2.1.0). object-latch-rejected puts back the 2.0 latch ("object" for a callback that fails with no value); reject-reason makes reject latch value_out_of_range. The ranged rules are kept in three places here
 # (serialize_int, int_relative's bounded tiers and the string length), where C++ reads all three
 # through serialize_int, so ranged-range and ranged-reconstruction patch each place.
 # object-terminal deletes serializeObject's latch both on entry and on exit (the reference's one
@@ -31,4 +31,6 @@ ranged-range	serialize_bytes.luau	if offset > maxLength then	if offset > maxLeng
 ranged-reconstruction	serialize_int.luau	holder.value = offset + min	holder.value = offset
 ranged-reconstruction	serialize_int_relative.luau	previous + bucket.min + offset	previous + offset
 object-terminal	serialize_stream.luau	if self._error ~= nil then\n\t\treturn false\n\tend\n\tlocal ok, err = (method :: any)(object, self)	local ok, err = (method :: any)(object, self)
-object-terminal	serialize_stream.luau	return self:_fail(if err ~= nil then err else "object")\n\tend\n\treturn self._error == nil	return self:_fail(if err ~= nil then err else "object")\n\tend\n\treturn true
+object-terminal	serialize_stream.luau	return self:_fail(if err ~= nil then err else SerializeError.Rejected)\n\tend\n\treturn self._error == nil	return self:_fail(if err ~= nil then err else SerializeError.Rejected)\n\tend\n\treturn true
+object-latch-rejected	serialize_stream.luau	return self:_fail(if err ~= nil then err else SerializeError.Rejected)	return self:_fail(if err ~= nil then err else "object")
+reject-reason	serialize_stream.luau	return self:_fail(SerializeError.Rejected)	return self:_fail(SerializeError.ValueOutOfRange)

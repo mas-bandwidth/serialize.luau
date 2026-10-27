@@ -192,7 +192,7 @@ local function runRecord(rec: any)
 	end
 end
 
-local EXPECTED_RECORDS = 36
+local EXPECTED_RECORDS = 37
 
 local function testConformance()
 	local text = require("./inputs").compressed_float

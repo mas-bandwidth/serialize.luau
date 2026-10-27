@@ -42,12 +42,14 @@ local SerializeError = table.freeze({
 	InvalidUtf8 = "invalid_utf8",
 	EmbeddedNul = "embedded_nul",
 	NonCanonical = "non_canonical",
+	Rejected = "rejected",
 })
 
 -- Raise messages for API misuse: serialize.go panics, raised naming the rule
 -- (DESIGN.md (g)). Family modules raise their own with the same prefix.
 local RAISE_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple of 8 bytes"
 local RAISE_NOT_AN_OBJECT = "serialize: serializeObject requires a table with a serialize method"
+local RAISE_REJECT_NOT_READ = "serialize: reject is read only; a write or measure stream has nothing to refuse"
 
 -- THE FAMILY LOADER (DESIGN.md (f) and (h)). The one require in the library
 -- that is not a literal: its path is always "./serialize_" .. name with name
@@ -160,7 +162,10 @@ Shared.alignBits = Shared._alignBits
 -- serializeObject runs object:serialize(stream), which returns true, or false
 -- and optionally the caller's own error value (serialize.go Serializer). A
 -- latched stream refuses before the object runs; a false latches the
--- caller's value, or "object" when it gives none (DESIGN.md (a)).
+-- caller's value, or Rejected when it gives none (STANDARD.md, Refusal
+-- reasons: a nested object that fails with no refusal of its own refuses as
+-- rejected; IMPLEMENTING.md U2). It goes through the one latch, so a reason a
+-- primitive inside the object latched first is kept (DESIGN.md (a)).
 function Shared.serializeObject(self: any, object: any): boolean
 	local method: any = if type(object) == "table" then object.serialize else nil
 	if type(method) ~= "function" then
@@ -171,7 +176,7 @@ function Shared.serializeObject(self: any, object: any): boolean
 	end
 	local ok, err = (method :: any)(object, self)
 	if not ok then
-		return self:_fail(if err ~= nil then err else "object")
+		return self:_fail(if err ~= nil then err else SerializeError.Rejected)
 	end
 	return self._error == nil
 end
@@ -332,6 +337,12 @@ function WriteStream.serializeEnd(self: any): boolean
 	return self._error == nil
 end
 
+-- reject is read only (IMPLEMENTING.md U2): on a write there is nothing to
+-- refuse, so calling it is API misuse and raises (DESIGN.md (g)).
+function WriteStream.reject(_self: any): boolean
+	error(RAISE_REJECT_NOT_READ, 2)
+end
+
 -- flush writes out the partially filled scratch word (STANDARD.md General
 -- Conventions, Flush). The flush ends the write.
 function WriteStream.flush(self: any)
@@ -470,6 +481,15 @@ function ReadStream.serializeEnd(self: any): boolean
 	return true
 end
 
+-- reject is the caller's own refusal of a value whose bytes were well formed
+-- (STANDARD.md, Refusal reasons, `rejected`; IMPLEMENTING.md U2). It latches
+-- Rejected through the one latch, so it is terminal and a reason latched
+-- first is kept, and it returns false so a serialize method can
+-- `return stream:reject()`.
+function ReadStream.reject(self: any): boolean
+	return self:_fail(SerializeError.Rejected)
+end
+
 -- ---------------------------------------------------------------------------
 -- MeasureStream (serialize.go MeasureStream): counts the bits a write would
 -- take, writing nothing. Every align counts as the worst case 7 bits.
@@ -511,6 +531,12 @@ end
 
 function MeasureStream.serializeAlign(self: any): boolean
 	return self:_measure(7)
+end
+
+-- reject is read only (IMPLEMENTING.md U2): a measure refuses nothing, so
+-- calling it is API misuse and raises (DESIGN.md (g)).
+function MeasureStream.reject(_self: any): boolean
+	error(RAISE_REJECT_NOT_READ, 2)
 end
 
 -- serializeEnd costs nothing (STANDARD.md end).

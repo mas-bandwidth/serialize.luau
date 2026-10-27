@@ -21,9 +21,10 @@ imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/*.txt`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.0.1
-(`b812b75cc0a75dd925af74103ab1f155b9431ac1`; format 2.0, with the object read
-terminality vectors of `3f40cb5f`) by `tools/revendor/revendor.sh v2.0.1`,
+VERBATIM from mas-bandwidth/serialize at tag v2.1.0
+(`884bc3098c9619d67308d9c6b5cdf38593d98b69`; format 2.0, standard 2.1: the
+`rejected` refusal reason and its `reject` vectors) by
+`tools/revendor/revendor.sh v2.1.0`,
 which diffs them against the tag's own copies. CI's corpus job diffs all
 four against the pin on every run. None is edited here; a change arrives by
 re-vendoring from a new tag or commit.
@@ -46,7 +47,7 @@ on success. Every serialize method returns a boolean: `true` on success,
 | name | serialize.go | family file |
 |---|---|---|
 | `FORMAT_VERSION` | format version 2.0 | entry (`"2.0"`) |
-| `SerializeError` | `Refusal` and its eight `Err*` reasons | stream |
+| `SerializeError` | `Refusal` and its eight `Err*` reasons, plus `rejected` (standard 2.1) | stream |
 | `WriteStream`, `ReadStream`, `MeasureStream` | the three streams | stream |
 | `Continue(stream, holder)`, `Until(stream, holder)` | `Continue`, `Until` | stream |
 | `BitWriter`, `BitReader` | `BitWriter`, `BitReader` | bitpacker |
@@ -74,6 +75,7 @@ the standard spells it:
 | `SerializeError.InvalidUtf8` | `"invalid_utf8"` | a string payload that is not well-formed UTF-8 |
 | `SerializeError.EmbeddedNul` | `"embedded_nul"` | a zero byte among a string's bytes |
 | `SerializeError.NonCanonical` | `"non_canonical"` | the int_relative absolute tier carrying a difference a bounded tier carries |
+| `SerializeError.Rejected` | `"rejected"` | the bytes were well formed and the reader's caller refused the value: `ReadStream:reject()`, or a nested object whose `serialize` returns `false` with no refusal and no error value of its own |
 
 `stream:error()` returns the FIRST latched reason or `nil`; `stream:ok()` is
 `stream:error() == nil`. The first refusal sticks: every later call returns
@@ -112,6 +114,7 @@ compressed float, which Go's concrete streams all carry):
 | `serializeAlign()` | | `SerializeAlign` |
 | `serializeEnd()` | | `SerializeEnd` |
 | `serializeObject(object)` | a table with `serialize(self, stream)` | `SerializeObject` |
+| `reject()` | | `serialize_reject` (read only; raises on a write or measure stream) |
 | `serializeIntRelative(previous, h)` | number; previous a number | `SerializeIntRelative` |
 | `alignBits()`, `bitsProcessed()`, `bytesProcessed()` | | `AlignBits`, `BitsProcessed`, `BytesProcessed` |
 | `setContext(v)`, `context()` | | `SetContext`, `Context` |
@@ -154,8 +157,9 @@ Deviations from serialize.js's spelling, each with its reason:
   `Until`, which keep Go's capital because `until` is a reserved word in Luau.
 - `serializeObject`: `object:serialize(stream)` returns `true`, or `false` and
   optionally the caller's own error value. On `false` the stream latches that
-  value, or the string `"object"` when none is given: serialize.go latches
-  the caller's error, and a latch must hold something.
+  value, or `SerializeError.Rejected` when none is given (STANDARD.md 2.1,
+  Refusal reasons; IMPLEMENTING.md U2), through the one latch, so a reason a
+  primitive inside the object latched first is kept.
 - Int128 and Uint128 operations are functions on the class tables, never
   operators, and the bitwise ones are spelled `band`, `bor`, `bxor`, `bnot`,
   because `and`, `or` and `not` are Luau keywords (the `integer` library's

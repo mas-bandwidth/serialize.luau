@@ -27,7 +27,7 @@ local METHODS = {
 	"serializeBool", "serializeFloat", "serializeDouble",
 	"serializeCompressedFloat", "serializeCompressedFloatPrecomputed",
 	"serializeBytes", "serializeString",
-	"serializeAlign", "serializeEnd", "serializeObject", "serializeIntRelative",
+	"serializeAlign", "serializeEnd", "serializeObject", "serializeIntRelative", "reject",
 	"alignBits", "bitsProcessed", "bytesProcessed",
 	"setContext", "context",
 }
@@ -73,13 +73,14 @@ function T.TestSmoke()
 		InvalidUtf8 = "invalid_utf8",
 		EmbeddedNul = "embedded_nul",
 		NonCanonical = "non_canonical",
+		Rejected = "rejected",
 	}
 	local listed = 0
 	for key, value in serialize.SerializeError do
 		check(REASONS[key] == value, "SerializeError." .. tostring(key) .. " is " .. tostring(value) .. ", not a reason the standard lists")
 		listed += 1
 	end
-	check(listed == 8, "SerializeError lists the eight reasons, and no others")
+	check(listed == 9, "SerializeError lists the nine reasons, and no others")
 	check(serialize.WriteStream.serializeWideString == nil, "wstring is gone (format 2.0)")
 
 	local w = serialize.WriteStream.new(buffer.create(16))

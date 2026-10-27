@@ -45,6 +45,7 @@ local REASONS: { [string]: boolean } = {
 	invalid_utf8 = true,
 	embedded_nul = true,
 	non_canonical = true,
+	rejected = true,
 }
 
 -- UNTOUCHED is the marker a refused read's destination starts with: no reader
@@ -750,6 +751,15 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local ok = r:serializeAlign()
 		table.insert(out, { op = op, ok = ok, value = nil })
 		return ok
+	elseif op == "reject" then
+		-- The caller's own refusal at the top level, through the reject entry
+		-- point (sequence.txt, `reject`; STANDARD.md, Refusal reasons). It is
+		-- read only, and only refused vectors carry it.
+		check(#st == 1, "the reject step takes no parameters")
+		check(r:isReading(), "a reject step reached a write or measure stream")
+		local ok = r:reject()
+		table.insert(out, { op = op, ok = ok, value = nil })
+		return ok
 	elseif op == "end" then
 		check(#st == 1, "the end step takes no parameters")
 		local ok = r:serializeEnd()
@@ -910,6 +920,15 @@ local function runSteps(r: any, steps: { { string } }, out: { any }, poison: boo
 					for j = 1, n do
 						local sub = steps[first + j]
 						check(sub ~= nil, "object step outruns the step list")
+						if sub[1] == "reject" then
+							-- Inside an object, reject is the object's
+							-- serialize returning failure here without a
+							-- refusal of its own: serializeObject must
+							-- latch it as rejected (object.txt).
+							check(#sub == 1, "the reject step takes no parameters")
+							table.insert(inner, { op = "reject", ok = false, value = nil })
+							return false
+						end
 						local beforeFailed = failed
 						local okStep = parseOneStep(s, sub, inner)
 						if not okStep then
@@ -990,7 +1009,7 @@ local function checkSeqValue(rec: any, entry: any, want: string)
 		else
 			check(decToInt(want) == entry.value, rec.name .. ": sequence fixed64 value mismatch")
 		end
-	elseif op == "align" or op == "object" or op == "end" then
+	elseif op == "align" or op == "object" or op == "end" or op == "reject" then
 		check(false, rec.name .. ": unexpected expect value for " .. op)
 	end
 end
@@ -1071,6 +1090,26 @@ local function runRecord(r: any, rec: any)
 	end
 end
 
+-- checkCallbackRefusal is the object check every refused object.txt vector
+-- also drives (the reference runner's run_callback_refuses_object): over the
+-- vector's bytes, a nested object whose serialize returns false on its own,
+-- touching nothing, must latch rejected (STANDARD.md, Refusal reasons;
+-- IMPLEMENTING.md U2), and the stream must then be terminal with the reason
+-- kept: a zero-bit object refuses without running, a read consumes nothing.
+local function checkCallbackRefusal(rec: any)
+	local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
+	local refuses = { serialize = function(_: any, _s: any): boolean return false end }
+	check(not r:serializeObject(refuses), rec.name .. ": serializeObject accepted a callback returning false")
+	check(r:error() == "rejected",
+		rec.name .. ": a callback-only object refusal latched " .. tostring(r:error()) .. ", not rejected")
+	local called = false
+	local after = { serialize = function(_: any, _s: any): boolean called = true return true end }
+	check(not r:serializeObject(after) and not called,
+		rec.name .. ": a nested object ran or was accepted after a callback-only refusal")
+	checkTerminal(r, "bits", {})
+	check(r:error() == "rejected", rec.name .. ": reads after a callback-only refusal overwrote rejected")
+end
+
 -- runFile runs every record of one corpus file, each on its own: a record
 -- that fails is recorded in failures (name -> what failed) and the run goes
 -- on. A name already seen anywhere in the corpus is malformed: names are
@@ -1087,7 +1126,12 @@ local function runFile(name: string, seen: { [string]: string }, failures: { [st
 		check(seen[rec.name] == nil, "vector name " .. rec.name .. " is in both " .. tostring(seen[rec.name]) .. ".txt and " .. name .. ".txt")
 		seen[rec.name] = name
 		local r = serialize.ReadStream.new(bytesToBuffer(rec.bytes))
-		local ok, err = pcall(runRecord, r, rec)
+		local ok, err = pcall(function()
+			runRecord(r, rec)
+			if name == "object" and rec.expect.refused then
+				checkCallbackRefusal(rec)
+			end
+		end)
 		if not ok then
 			failures[rec.name] = tostring(err)
 		end
