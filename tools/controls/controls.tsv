@@ -6,9 +6,11 @@
 # corpus run against it must fail exactly the vectors of conformance-controls/<name>.expected. unknown-operation patches nothing: it adds
 # conformance-controls/unknown-operation.txt to the corpus, whose one vector must fail.
 #
-# Carried: all 16 controls the reference names. The ranged rules are kept in three places here
+# Carried: all 17 controls the reference names. The ranged rules are kept in three places here
 # (serialize_int, int_relative's bounded tiers and the string length), where C++ reads all three
 # through serialize_int, so ranged-range and ranged-reconstruction patch each place.
+# object-terminal deletes serializeObject's latch both on entry and on exit (the reference's one
+# rule, 3f40cb5f): with either left in, an empty nested object after a refusal still refuses.
 unknown-operation	-		
 align-padding	serialize_stream.luau	if self:_readBits(n) ~= 0 then	if self:_readBits(n) ~= 0 and n < 0 then
 float-finite	serialize_float.luau	if not floatBitsAreFinite(bits) then	if not floatBitsAreFinite(bits) and bits < 0 then
@@ -28,3 +30,5 @@ ranged-range	serialize_int_relative.luau	if offset > bucket.max - bucket.min the
 ranged-range	serialize_bytes.luau	if offset > maxLength then	if offset > maxLength and offset < 0 then
 ranged-reconstruction	serialize_int.luau	holder.value = offset + min	holder.value = offset
 ranged-reconstruction	serialize_int_relative.luau	previous + bucket.min + offset	previous + offset
+object-terminal	serialize_stream.luau	if self._error ~= nil then\n\t\treturn false\n\tend\n\tlocal ok, err = (method :: any)(object, self)	local ok, err = (method :: any)(object, self)
+object-terminal	serialize_stream.luau	return self:_fail(if err ~= nil then err else "object")\n\tend\n\treturn self._error == nil	return self:_fail(if err ~= nil then err else "object")\n\tend\n\treturn true

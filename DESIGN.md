@@ -21,10 +21,10 @@ imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/*.txt`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at commit 3617d3606db9c5686018d6568f0aa761869083c5
-(the 2.0.1 corpus: format 2.0, with the object read terminality vectors of
-`3f40cb5f`) by `tools/revendor/revendor.sh 3617d3606db9c5686018d6568f0aa761869083c5`,
-which diffs them against that commit's own copies. CI's corpus job diffs all
+VERBATIM from mas-bandwidth/serialize at tag v2.0.1
+(`b812b75cc0a75dd925af74103ab1f155b9431ac1`; format 2.0, with the object read
+terminality vectors of `3f40cb5f`) by `tools/revendor/revendor.sh v2.0.1`,
+which diffs them against the tag's own copies. CI's corpus job diffs all
 four against the pin on every run. None is edited here; a change arrives by
 re-vendoring from a new tag or commit.
 
@@ -509,7 +509,7 @@ depends on serialize-luau-bitpacker.
   requires the record's bytes; names are unique across the corpus. Each
   record runs on its own and every failing record is reported by name.
 - THE NEGATIVE CONTROLS: `make controls` (`tools/luaurun -controls`) runs every
-  control of `tools/controls/controls.tsv`, all 16 the reference names. Each
+  control of `tools/controls/controls.tsv`, all 17 the reference names. Each
   builds the conformance unit with ONE refusal rule deleted from a copy of the
   source (each needle must occur exactly once, else the control is red; a rule
   kept in several places, the ranged offset and its reconstruction in
