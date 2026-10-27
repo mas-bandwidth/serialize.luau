@@ -59,6 +59,11 @@ jobs:
         if: hashFiles('fuzz/go.mod') != ''
         run: make fuzz
 
+      # The differential's own negative control: -widen-int must turn it red.
+      - name: Fuzz negative control
+        if: hashFiles('fuzz/go.mod') != ''
+        run: make fuzz-neg
+
   corpus:
     name: the standard and the corpus match the corpus pin
     # THE FORK GUARD: this repository is PUBLIC and these are its own fleet runners, so a

@@ -7,11 +7,20 @@
 // the two readers must agree on the reason as well as the decision. TestDifferentialNegativeControl sets a test-only flag
 // that makes the Go side write one int range one bit wider and asserts the
 // harness catches the divergence (the negative control must go red without it).
+//
+// Flags (after -args, or directly on go test): -programs N (default 2000) and
+// -seed S (default 20261017) keep the per-push gate fixed; -duration D keeps
+// generating batches from the seed until D has passed (the nightly run, with a
+// fresh seed each night); -failures DIR writes every disagreeing program as a
+// replayable driver input; -widen-int runs the whole differential with the
+// Go writer one bit wider on every ranged int, and it must go red (make fuzz-neg).
+// The seed and a reproduction command are logged on every run.
 package fuzz
 
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -21,14 +30,24 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	serialize "github.com/mas-bandwidth/serialize.go/v2"
 )
 
 const (
 	bufferSize  = 4096
-	numPrograms = 2000
 	batchSize   = 100
+	defaultSeed = 20261017
+	seedStream  = 0x5eed
+)
+
+var (
+	numPrograms = flag.Int("programs", 2000, "programs to generate when -duration is 0 (rounded up to a whole batch of 100)")
+	seed        = flag.Uint64("seed", defaultSeed, "generator seed; the per-push gate uses the default, the nightly run a fresh one")
+	duration    = flag.Duration("duration", 0, "if > 0, keep generating batches from -seed until this much time has passed")
+	failuresDir = flag.String("failures", "", "if set, write every disagreeing program here as a replayable driver input")
+	widenInt    = flag.Bool("widen-int", false, "negative control: the Go writer widens every ranged int by one bit; the differential must go red")
 )
 
 // widenRange is the test-only negative-control flag: when set, the Go writer
@@ -510,14 +529,21 @@ func (o *fuzzObj) Serialize(s serialize.Stream) error {
 	return s.SerializeInt(&o.v, o.mn, o.mx)
 }
 
-// widening: double the span so the wire range gains at least one bit.
+// widening: double the span so the wire range gains at least one bit. Where
+// doubling would pass the type's maximum (which would wrap below min, and the Go
+// writer panics on min > max) the maximum itself is used: every generated min is
+// below a quarter of the type's range, so max - min still needs one bit more
+// than the span did.
 
 func widen32(mn, mx int32) int32 {
 	if mn == mx {
 		return mx
 	}
-	span := uint64(uint32(mx)) - uint64(uint32(mn))
-	return int32(uint32(mn) + uint32(2*span))
+	w := int64(mn) + 2*(int64(mx)-int64(mn))
+	if w > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(w)
 }
 
 func widen64(mn, mx int64) int64 {
@@ -525,6 +551,9 @@ func widen64(mn, mx int64) int64 {
 		return mx
 	}
 	span := uint64(mx) - uint64(mn)
+	if mx > 0 && span > uint64(math.MaxInt64-mx) {
+		return math.MaxInt64
+	}
 	return int64(uint64(mn) + 2*span)
 }
 
@@ -799,11 +828,38 @@ func (st step) text() string {
 	return sb.String()
 }
 
-func verifyBatch(t *testing.T, repoRoot string, programs []program) {
+// recordFailure writes program n as a driver input (the batch format of
+// buildBatchText, one program) beside a note of the disagreement, so a nightly
+// failure is uploaded and replays without regenerating from the seed.
+func recordFailure(t *testing.T, n int, p program, note string) {
+	t.Helper()
+	if *failuresDir == "" {
+		return
+	}
+	if err := os.MkdirAll(*failuresDir, 0o755); err != nil {
+		t.Errorf("failures dir: %v", err)
+		return
+	}
+	base := filepath.Join(*failuresDir, fmt.Sprintf("seed-%d-program-%d", *seed, n))
+	if err := os.WriteFile(base+".in", []byte(buildBatchText([]program{p})), 0o644); err != nil {
+		t.Errorf("write failing program: %v", err)
+	}
+	if err := os.WriteFile(base+".txt", []byte(note+"\n"), 0o644); err != nil {
+		t.Errorf("write failure note: %v", err)
+	}
+}
+
+func verifyBatch(t *testing.T, repoRoot string, first int, programs []program) {
 	t.Helper()
 	batchText := buildBatchText(programs)
 	lines := runBatch(t, repoRoot, batchText)
 	li := 0
+	fail := func(idx int, format string, args ...any) {
+		t.Helper()
+		msg := fmt.Sprintf(format, args...)
+		t.Error(msg)
+		recordFailure(t, first+idx, programs[idx], msg)
+	}
 	for idx, p := range programs {
 		n := 2
 		if p.mutate != nil {
@@ -815,7 +871,7 @@ func verifyBatch(t *testing.T, repoRoot string, programs []program) {
 			li++
 		}
 		if len(wants) < n {
-			t.Errorf("program %d: driver output truncated (got %d lines, want %d)", idx, len(wants), n)
+			fail(idx, "program %d: driver output truncated (got %d lines, want %d)", first+idx, len(wants), n)
 			continue
 		}
 		var wline, rline, mline string
@@ -833,43 +889,40 @@ func verifyBatch(t *testing.T, repoRoot string, programs []program) {
 		}
 		bytesA := writeGoProgram(p)
 		if strings.HasPrefix(wline, "WE ") {
-			t.Errorf("program %d write refused unexpectedly (driver kind=%s)", idx, strings.TrimPrefix(wline, "WE "))
+			fail(idx, "program %d write refused unexpectedly (driver kind=%s)", first+idx, strings.TrimPrefix(wline, "WE "))
 			continue
 		}
 		wantHex := strings.TrimPrefix(wline, "W ")
 		if wantHex != hexEncode(bytesA) {
-			t.Errorf("program %d write mismatch\n  go: %s\n  luau: %s", idx, hexEncode(bytesA), wantHex)
+			fail(idx, "program %d write mismatch\n  go: %s\n  luau: %s", first+idx, hexEncode(bytesA), wantHex)
 			continue
 		}
 		exp := p.expected
 		traceG := goRead(bytesA, p)
 		if traceG != exp {
-			t.Errorf("program %d: go read-back != expected\n  expected: %s\n  go:      %s", idx, exp, traceG)
+			fail(idx, "program %d: go read-back != expected\n  expected: %s\n  go:      %s", first+idx, exp, traceG)
 		}
 		traceL := strings.TrimPrefix(rline, "R ")
 		if traceL != traceG {
-			t.Errorf("program %d read-back mismatch\n  go:   %s\n  luau: %s", idx, traceG, traceL)
+			fail(idx, "program %d read-back mismatch\n  go:   %s\n  luau: %s", first+idx, traceG, traceL)
 		}
 		if p.mutate != nil {
 			mut := mutateBytes(bytesA, p.mutate)
 			mtraceG := goRead(mut, p)
 			mtraceL := strings.TrimPrefix(mline, "M ")
 			if mtraceL != mtraceG {
-				t.Errorf("program %d mutated-read mismatch\n  go:   %s\n  luau: %s\n  recipe: %v", idx, mtraceG, mtraceL, p.mutate)
+				fail(idx, "program %d mutated-read mismatch\n  go:   %s\n  luau: %s\n  recipe: %v", first+idx, mtraceG, mtraceL, p.mutate)
 			}
 		}
 	}
 }
 
-func TestDifferentialAgainstSerializeGo(t *testing.T) {
-	r := rand.New(rand.NewPCG(20261017, 0x5eed))
-	repoRoot, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	repoRoot = filepath.Dir(repoRoot)
-	programs := make([]program, 0, numPrograms)
-	for i := 0; i < numPrograms; i++ {
+// genBatch draws the next n programs from r, every fourth one mutated. The
+// draw order is the same whether the run is fixed-count or timed, so a program
+// index under a seed names the same program in both.
+func genBatch(r *rand.Rand, n int) []program {
+	programs := make([]program, 0, n)
+	for i := 0; i < n; i++ {
 		p := genProgram(r)
 		if i%4 == 0 {
 			a := writeGoProgram(p)
@@ -890,22 +943,50 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 		}
 		programs = append(programs, p)
 	}
-	mutated := 0
-	for _, p := range programs {
-		if p.mutate != nil {
-			mutated++
+	return programs
+}
+
+func TestDifferentialAgainstSerializeGo(t *testing.T) {
+	prevWiden := widenRange
+	widenRange = *widenInt
+	defer func() { widenRange = prevWiden }()
+	r := rand.New(rand.NewPCG(*seed, seedStream))
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot = filepath.Dir(repoRoot)
+	t.Logf("differential: seed=%d duration=%s programs=%d widen-int=%v", *seed, *duration, *numPrograms, *widenInt)
+	start := time.Now()
+	total, mutated := 0, 0
+	for b := 0; ; b++ {
+		if *duration > 0 {
+			if time.Since(start) >= *duration {
+				break
+			}
+		} else if total >= *numPrograms {
+			break
+		}
+		programs := genBatch(r, batchSize)
+		for _, p := range programs {
+			if p.mutate != nil {
+				mutated++
+			}
+		}
+		verifyBatch(t, repoRoot, total, programs)
+		total += len(programs)
+		if t.Failed() {
+			t.Logf("differential: stopped at batch %d; reproduce: cd fuzz && go test -count=1 -run TestDifferentialAgainstSerializeGo -v . -args -seed %d -programs %d", b, *seed, total)
+			break
 		}
 	}
-	t.Logf("differential: %d programs, %d mutated", len(programs), mutated)
-	for b := 0; b < numPrograms/batchSize; b++ {
-		start := b * batchSize
-		verifyBatch(t, repoRoot, programs[start:start+batchSize])
-	}
+	t.Logf("differential: seed=%d %d programs, %d mutated, %s", *seed, total, mutated, time.Since(start).Round(time.Second))
 }
 
 func TestDifferentialNegativeControl(t *testing.T) {
+	prevWiden := widenRange
 	widenRange = true
-	defer func() { widenRange = false }()
+	defer func() { widenRange = prevWiden }()
 	r := rand.New(rand.NewPCG(99, 42))
 	repoRoot, err := os.Getwd()
 	if err != nil {

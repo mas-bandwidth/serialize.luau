@@ -1,0 +1,77 @@
+# The nightly extended differential fuzz, the counterpart of the C++ reference's
+# nightly-fuzz.yml. ci.yml's `make fuzz` is the per-push gate: 2000 programs from
+# a fixed seed. This run generates programs for `duration` seconds from a fresh
+# seed each time, so every night explores programs no gate has seen. Luau has no
+# coverage-guided fuzzer, so there is no corpus to cache: the seed is the whole
+# input, it is logged, and a failure reproduces from it (the test prints the
+# command). Every disagreeing program is uploaded as a replayable driver input.
+name: Nightly Fuzz
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # every day at 08:00 UTC
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzz duration in seconds'
+        default: '3600'
+        required: false
+
+jobs:
+  fuzz:
+    name: differential fuzz against serialize.go (extended)
+    # THE FORK GUARD, as in ci.yml (this workflow has no pull_request trigger).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff   # v5
+        with:
+          go-version-file: fuzz/go.mod
+
+      # The pin -- URL and sha256 -- lives once, in the Makefile; make dist-luau
+      # refuses any archive whose sha256 is not the pin.
+      - name: Read the interpreter pin from the Makefile
+        id: pin
+        run: |
+          sha=$(sed -n 's/^LUAU_ZIP_SHA[[:space:]]*:=[[:space:]]*//p' Makefile | head -1)
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4
+        with:
+          path: dist
+          key: luau-${{ steps.pin.outputs.sha }}
+
+      - name: Fetch the pinned Luau
+        run: make dist-luau
+
+      # A harness that cannot go red proves nothing: the negative control runs
+      # first, every night, before the long run is trusted.
+      - name: Negative control (-widen-int must go red)
+        run: make fuzz-neg
+
+      - name: Draw this run's seed
+        id: seed
+        run: |
+          seed=$(od -An -N8 -tu8 /dev/urandom | tr -d ' ')
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          echo "fuzz seed: $seed (reproduce: make fuzz-extended FUZZ_SEED=$seed)"
+
+      - name: Fuzz
+        env:
+          DURATION: ${{ github.event.inputs.duration || '3600' }}
+          SEED: ${{ steps.seed.outputs.seed }}
+        run: make fuzz-extended FUZZ_SEED="$SEED" FUZZ_DURATION="${DURATION}s"
+
+      - name: Upload failing programs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
+        with:
+          name: fuzz-failures-seed-${{ steps.seed.outputs.seed }}
+          path: |
+            build/fuzz-failures/
+            build/fuzz-neg.log
+          if-no-files-found: ignore
