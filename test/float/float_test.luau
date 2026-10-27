@@ -201,7 +201,14 @@ local function runFloat(): number
 	local count = countOperations(text)
 	print("float.txt: " .. #records .. " records")
 	check(#records == count, "float.txt: parsed " .. #records .. " of " .. count .. " records")
+	local ran = 0
 	for _, rec in records do
+		-- float.txt's sequence records (the sNaN-shaped neighbours, 2.1) are
+		-- the conformance runner's: this test runs the float operations.
+		if rec.operation ~= "float" then
+			continue
+		end
+		ran += 1
 		local name = "float " .. tostring(rec.name)
 		local r = serialize.ReadStream.new(bytesBuffer(rec.bytes))
 		local h = { value = 12345.0 }
@@ -224,7 +231,7 @@ local function runFloat(): number
 			end
 		end
 	end
-	return #records
+	return ran
 end
 
 local function runDouble(): number
@@ -305,7 +312,7 @@ function T.TestSerializeFloat()
 	local floats = runFloat()
 	local doubles = runDouble()
 	check(floats == 22, "float.txt record count is 22")
-	check(doubles == 22, "double.txt record count is 22")
+	check(doubles == 27, "double.txt record count is 27")
 
 	local cases = 0
 	for _, row in FROUND do
