@@ -71,7 +71,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
-      SERIALIZE_TAG: v2.0.0
+      SERIALIZE_REF: 3617d3606db9c5686018d6568f0aa761869083c5   # the 2.0.1 corpus; a tag or a full commit sha
     steps:
       - uses: actions/checkout@v4
 
@@ -79,7 +79,11 @@ jobs:
       # VERBATIM vendored copies (DESIGN.md, "The vendored standard"). They must
       # be the pinned release's own bytes; a divergence is red, never a skip.
       - name: Check out the reference at the corpus pin
-        run: git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git "$RUNNER_TEMP/serialize"
+        run: |
+          rm -rf "$RUNNER_TEMP/serialize"
+          git init --quiet "$RUNNER_TEMP/serialize"
+          git -C "$RUNNER_TEMP/serialize" fetch --quiet --depth 1 https://github.com/mas-bandwidth/serialize.git "$SERIALIZE_REF"
+          git -C "$RUNNER_TEMP/serialize" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
 
       - name: The vendored corpus and standard are the pin's
         run: |
