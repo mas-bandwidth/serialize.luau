@@ -1,0 +1,5 @@
+operation bool
+name override-true
+bytes 01
+expect value = true
+consumed 1
