@@ -898,19 +898,34 @@ local function runSteps(r: any, steps: { { string } }, out: { any }, poison: boo
 	while i <= #steps do
 		local st = steps[i]
 		if st[1] == "object" then
+			-- An object step is a real nested object: its n steps run inside
+			-- serializeObject, whose own result is a step like any other, so
+			-- an empty object (object 0) after a refusal must still refuse.
 			local n = tonumber(st[2]) :: number
+			local first = i
 			table.insert(out, { op = "object", ok = true, value = nil })
 			local inner = {}
-			for j = 1, n do
-				local sub = steps[i + j]
-				check(sub ~= nil, "object step outruns the step list")
-				local beforeFailed = failed
-				local okStep = parseOneStep(r, sub, inner)
-				if not okStep then
-					noteFail()
-				elseif beforeFailed and poison then
-					check(false, "a step after a refusal succeeded")
-				end
+			local nested = {
+				serialize = function(_: any, s: any): boolean
+					for j = 1, n do
+						local sub = steps[first + j]
+						check(sub ~= nil, "object step outruns the step list")
+						local beforeFailed = failed
+						local okStep = parseOneStep(s, sub, inner)
+						if not okStep then
+							noteFail()
+						elseif beforeFailed and poison then
+							check(false, "a step after a refusal succeeded")
+						end
+					end
+					return true
+				end,
+			}
+			local beforeFailed = failed
+			if not r:serializeObject(nested) then
+				noteFail()
+			elseif beforeFailed and poison then
+				check(false, "a step after a refusal succeeded")
 			end
 			i += n
 			for _, e in inner do
