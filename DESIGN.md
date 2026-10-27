@@ -21,12 +21,12 @@ imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/*.txt`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.0.0
-(`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`; the standard and corpus
-pin `dedf58efa93832fd243dbf3a2a1ca0a91c46b14b`) by
-`tools/revendor/revendor.sh v2.0.0`, which diffs them against the tag's own
-copies. CI's corpus job diffs all four against the tag on every run. None is
-edited here; a change arrives by re-vendoring from a new tag.
+VERBATIM from mas-bandwidth/serialize at commit 3617d3606db9c5686018d6568f0aa761869083c5
+(the 2.0.1 corpus: format 2.0, with the object read terminality vectors of
+`3f40cb5f`) by `tools/revendor/revendor.sh 3617d3606db9c5686018d6568f0aa761869083c5`,
+which diffs them against that commit's own copies. CI's corpus job diffs all
+four against the pin on every run. None is edited here; a change arrives by
+re-vendoring from a new tag or commit.
 
 **The pin.** Luau 0.741, the same pin as schema's Luau leg (schema
 `docs/PORT-LUAU.md`, branch `sprint/schema-luau-port-design.w1.g1.e21`,

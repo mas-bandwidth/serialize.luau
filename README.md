@@ -2,7 +2,7 @@
 
 A simple bitpacking serializer for Luau, wire compatible with the C++ [serialize](https://github.com/mas-bandwidth/serialize) library and [serialize.go](https://github.com/mas-bandwidth/serialize.go): the same values produce the same bytes.
 
-The wire format is serialize's STANDARD.md, **format version 2.0**, vendored verbatim from serialize v2.0.0 with the shared conformance vectors (conformance/) and negative controls (conformance-controls/). Every vector passes, every refusal for its stated reason, and every carried control fails exactly its expected list. The pinned interpreter is Luau 0.741.
+The wire format is serialize's STANDARD.md, **format version 2.0**, vendored verbatim from serialize's 2.0.1 corpus (commit 3617d360) with the shared conformance vectors (conformance/) and negative controls (conformance-controls/). Every vector passes, every refusal for its stated reason, and every carried control fails exactly its expected list. The pinned interpreter is Luau 0.741.
 
 Format 2.0 in one paragraph: the wire carries only integers and bytes, and every value has exactly one encoding. Floats and doubles are finite (NaN and the infinities are refused); strings are well-formed UTF-8 with no NUL; a reader refuses padding that is not zero, a non-canonical int_relative tier and anything after the end of the object; every refusal names its reason (`stream:error()`, one of `serialize.SerializeError`); and wstring is gone.
 
@@ -26,6 +26,6 @@ DESIGN.md is the design: the API, the refusal reasons, the bit order, the number
     make fuzz           # the differential fuzz against serialize.go v2.0.0
     make fuzz-neg       # its negative control: -widen-int must make it go red
     make fuzz-extended FUZZ_SEED=S FUZZ_DURATION=3600s   # the nightly run
-    tools/revendor/revendor.sh v2.0.0   # re-vendor the standard and the corpus
+    tools/revendor/revendor.sh <tag or full sha>   # re-vendor the standard and the corpus
 
 BSD 3-Clause license.

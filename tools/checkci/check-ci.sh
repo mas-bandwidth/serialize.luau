@@ -5,7 +5,7 @@
 # Reads .github/workflows/ci.yml and DESIGN.md only; no network. It fails,
 # naming the line, when ci.yml spells an interpreter URL or sha256 (the pin
 # lives once, in the Makefile), when the workflow does not run `make dist-luau`,
-# `make test` and `make controls`, when a job lacks the fork guard, or when its corpus tag
+# `make test` and `make controls`, when a job lacks the fork guard, or when its corpus pin
 # differs from DESIGN.md's pin. Its controls are scratch copies of ci.yml, one
 # with a pasted sha256 and one without the fork guard: each must fail its scan,
 # or this test fails.
@@ -48,9 +48,10 @@ guard_gap() {
 	fi
 }
 
-# a_tag LINE extracts the first vX.Y.Z from a FILE:LINE record, or empty.
-a_tag() {
-	printf '%s\n' "$1" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1
+# a_ref LINE extracts the corpus pin from a FILE:LINE record: the first vX.Y.Z
+# tag or 40-digit commit sha after the line-number prefix, or empty.
+a_ref() {
+	printf '%s\n' "$1" | sed 's/^[0-9]*://' | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40}' | head -1
 }
 
 printf 'RUN TestCheckCI\n'
@@ -71,16 +72,16 @@ EOF
 		runs_make "$target" || fail "$ci: ci.yml does not run 'make $target'"
 	done
 
-	ci_line=$(grep -nE '^[[:space:]]*SERIALIZE_TAG:' "$ci" | head -1)
-	ci_tag=$(a_tag "$ci_line")
-	design_line=$(grep -nE 'VERBATIM from mas-bandwidth/serialize at tag' "$design" | head -1)
-	design_tag=$(a_tag "$design_line")
-	case "$ci_tag" in
+	ci_line=$(grep -nE '^[[:space:]]*SERIALIZE_REF:' "$ci" | head -1)
+	ci_ref=$(a_ref "$ci_line")
+	design_line=$(grep -nE 'VERBATIM from mas-bandwidth/serialize at (tag|commit)' "$design" | head -1)
+	design_ref=$(a_ref "$design_line")
+	case "$ci_ref" in
 	'')
-		fail "$ci: ci.yml does not name a SERIALIZE_TAG corpus pin" ;;
+		fail "$ci: ci.yml does not name a SERIALIZE_REF corpus pin" ;;
 	*)
-		if [ "$ci_tag" != "$design_tag" ]; then
-			fail "$ci:$ci_line: corpus tag $ci_tag differs from DESIGN.md:$design_line corpus pin ${design_tag:-none}"
+		if [ "$ci_ref" != "$design_ref" ]; then
+			fail "$ci:$ci_line: corpus pin $ci_ref differs from DESIGN.md:$design_line corpus pin ${design_ref:-none}"
 		fi ;;
 	esac
 
