@@ -32,6 +32,10 @@ local RAISE_HOLDER_TYPE = "serialize: serializeIntRelative holder must be table"
 -- The latched kinds (DESIGN.md (a)); the stream values are the same strings.
 local PAST_END = "past_end"
 local VALUE_OUT_OF_RANGE = "value_out_of_range"
+
+-- The write-misuse traps (IMPLEMENTING.md U9, U6): raised, never latched.
+local RAISE_RANGE = "serialize: serializeIntRelative current must be above previous and in the domain"
+local RAISE_ROOM = "serialize: the write does not fit the room left in the buffer"
 local NON_CANONICAL = "non_canonical"
 
 -- The last bounded tier's top difference (STANDARD.md int_relative): an
@@ -119,9 +123,9 @@ local M = {}
 
 -- writeIntRelative writes current relative to previous, taking the first tier
 -- the difference fits (STANDARD.md int_relative: the canonical encoding).
--- previous outside the domain raises; previous not less than current and
--- current outside the domain latch ValueOutOfRange; a full buffer latches
--- PastEnd before any bit moves (DESIGN.md (g)).
+-- previous outside the domain, previous not less than current, current
+-- outside the domain and a write that does not fit the room left all trap
+-- before any bit moves, and latch nothing (IMPLEMENTING.md U9; DESIGN.md (g)).
 function M.writeIntRelative(s: any, previous: number, holder: any): boolean
 	local bad = declarationMisuse(previous, holder)
 	if bad ~= nil then
@@ -135,15 +139,15 @@ function M.writeIntRelative(s: any, previous: number, holder: any): boolean
 		return s:_misuse(RAISE_CURRENT_TYPE)
 	end
 	if previous >= current then
-		return s:_fail(VALUE_OUT_OF_RANGE)
+		return s:_misuse(RAISE_RANGE)
 	end
 	if current > INT_RELATIVE_MAX then
-		return s:_fail(VALUE_OUT_OF_RANGE)
+		return s:_misuse(RAISE_RANGE)
 	end
 	local difference = current - previous
 	local width = writeWidth(difference)
 	if s:_available() < width then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	if difference == 1 then
 		s:_writeBits(1, 1)
@@ -233,10 +237,10 @@ function M.measureIntRelative(s: any, previous: number, holder: any): boolean
 		return s:_misuse(RAISE_CURRENT_TYPE)
 	end
 	if previous >= current then
-		return s:_fail(VALUE_OUT_OF_RANGE)
+		return s:_misuse(RAISE_RANGE)
 	end
 	if current > INT_RELATIVE_MAX then
-		return s:_fail(VALUE_OUT_OF_RANGE)
+		return s:_misuse(RAISE_RANGE)
 	end
 	return s:_measure(writeWidth(current - previous))
 end

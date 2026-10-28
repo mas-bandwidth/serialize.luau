@@ -5,11 +5,11 @@
 -- helpers, wire compatible with serialize (STANDARD.md, format version 2.0)
 -- and serialize.go v2.0.0 write_stream.go, read_stream.go and measure_stream.go.
 --
--- The writer is STRICT: it emits exactly serialize.go's bytes, and where
--- serialize.go's WriteStream refuses (a full buffer) this port latches the
--- same kind and writes nothing for that call; API misuse that serialize.go
--- panics on (bits outside its range) raises naming the same rule on write and
--- measure, and refuses ValueOutOfRange on read (IMPLEMENTING.md U7). Reads refuse
+-- The writer is STRICT: it emits exactly serialize.go's bytes. Write misuse
+-- (bits outside their range, a value too wide for its bits, a write that does
+-- not fit the room left) traps on write and measure, naming the rule, writes
+-- nothing for that call and latches nothing (IMPLEMENTING.md U9, U6); on read
+-- the same misuse refuses ValueOutOfRange (IMPLEMENTING.md U7). Reads refuse
 -- where serialize.go refuses; a refusal leaves the caller's destination
 -- untouched and the stream terminal (STANDARD.md, Reader Obligations).
 --
@@ -21,6 +21,10 @@
 
 -- The refusal reason the stream latches (DESIGN.md (a); STANDARD.md, Refusal reasons).
 local PAST_END = "past_end"
+
+-- The trap for an operation that does not fit the room left in a write
+-- buffer (IMPLEMENTING.md U9, U10): write misuse, never a latched past_end.
+local RAISE_ROOM = "serialize: the write does not fit the room left in the buffer"
 
 -- Raise messages for API misuse: serialize.go's panic strings (serialize.go
 -- v2.0.0 serialize.go; DESIGN.md (g)), and the value-width rule of
@@ -70,7 +74,7 @@ function M.writeBits(s: any, h: any, bits: number): boolean
 		return false
 	end
 	if s:_available() < bits then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	s:_writeBits(value, bits)
 	return true
@@ -90,9 +94,14 @@ function M.readBits(s: any, h: any, bits: number): boolean
 	return true
 end
 
+-- A measure makes every check a write makes, except room, by the same trap
+-- (IMPLEMENTING.md U6, U9): the value's width included.
 function M.measureBits(s: any, h: any, bits: number): boolean
 	if type(bits) ~= "number" or not (bits >= 1 and bits <= 32) or bits // 1 ~= bits then
 		return s:_misuse(RAISE_BITS_RANGE)
+	end
+	if not fits(h.value, POW2[bits]) then
+		return s:_misuse(RAISE_VALUE_BITS)
 	end
 	return s:_measure(bits)
 end
@@ -115,7 +124,7 @@ function M.writeBits64(s: any, h: any, bits: number): boolean
 		return false
 	end
 	if s:_available() < bits then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	s:_writeBits64(value, bits)
 	return true
@@ -139,6 +148,13 @@ function M.measureBits64(s: any, h: any, bits: number): boolean
 	if type(bits) ~= "number" or not (bits >= 1 and bits <= 64) or bits // 1 ~= bits then
 		return s:_misuse(RAISE_BITS_RANGE64)
 	end
+	local value = h.value
+	if typeof(value) ~= "integer" then
+		return s:_misuse(RAISE_INTEGER_BITS64)
+	end
+	if bits < 64 and integer.rshift(value, integer.create(bits)) ~= 0i then
+		return s:_misuse(RAISE_VALUE_BITS64)
+	end
 	return s:_measure(bits)
 end
 
@@ -155,7 +171,7 @@ function M.writeBool(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 1 then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	s:_writeBits(h.value and 1 or 0, 1)
 	return true
@@ -174,7 +190,7 @@ function M.writeUint8(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 8 then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	s:_writeBits(h.value, 8)
 	return true
@@ -193,7 +209,7 @@ function M.writeUint16(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 16 then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	s:_writeBits(h.value, 16)
 	return true
@@ -212,7 +228,7 @@ function M.writeUint32(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 32 then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	s:_writeBits(h.value, 32)
 	return true
@@ -233,7 +249,7 @@ function M.writeUint64(s: any, h: any): boolean
 		return false
 	end
 	if s:_available() < 64 then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	s:_writeBits64(h.value, 64)
 	return true

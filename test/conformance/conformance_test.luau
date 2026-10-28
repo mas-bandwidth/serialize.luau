@@ -469,7 +469,7 @@ local function runFloat(r: any, rec: any)
 	local h = { value = 12345.0 }
 	check(r:serializeFloat(h), rec.name .. ": float accepted read refused")
 	local want = hexToBits32(rec.expect.value)
-	local ff = serialize._family("float")
+	local ff = require("./serialize_stream").family("float")
 	check(ff.f32bits(h.value) == want, rec.name .. ": float read bits differ")
 	check(r:bitsProcessed() == rec.consumed, rec.name .. ": float consumed")
 	if rec.writer then
@@ -680,7 +680,7 @@ local function runCompressedFloat(r: any, rec: any)
 	end
 	check(ok, rec.name .. ": compressed_float accepted read refused")
 	local want = hexToBits32(rec.expect.value)
-	check(serialize._family("float").f32bits(h.value) == want, rec.name .. ": compressed_float read bits differ")
+	check(require("./serialize_stream").family("float").f32bits(h.value) == want, rec.name .. ": compressed_float read bits differ")
 	check(r:bitsProcessed() == rec.consumed, rec.name .. ": compressed_float consumed")
 	check(not rec.writer, rec.name .. ": compressed_float has no canonical writer value")
 end
@@ -691,7 +691,7 @@ end
 local function runWriterInput(rec: any)
 	check(rec.op == "compressed_float", rec.name .. ": writer_input on " .. rec.op)
 	local w = serialize.WriteStream.new(buffer.create(16))
-	local value = serialize._family("float").f32frombits(hexToBits32(rec.writerInput))
+	local value = require("./serialize_stream").family("float").f32frombits(hexToBits32(rec.writerInput))
 	check(w:serializeCompressedFloat({ value = value }, tonumber(rec.params.min), tonumber(rec.params.max), tonumber(rec.params.res)),
 		rec.name .. ": writer_input write refused (" .. tostring(w:error()) .. ")")
 	w:flush()
@@ -769,7 +769,7 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local base = if dec ~= nil then dec else 12345.0
 		local h = { value = base }
 		local ok = r:serializeFloat(h)
-		table.insert(out, { op = op, ok = ok, bits = serialize._family("float").f32bits(h.value) })
+		table.insert(out, { op = op, ok = ok, bits = require("./serialize_stream").family("float").f32bits(h.value) })
 		if ok then st.decoded = h.value else check(h.value == base, "a refused float step changed its holder") end
 		return ok
 	elseif op == "double" then
@@ -876,7 +876,7 @@ local function parseOneStep(r: any, st: { string }, out: { any }): boolean
 		local base = if dec ~= nil then dec elseif r:isReading() then 12345.0 else 0.0
 		local h = { value = base }
 		local ok = r:serializeCompressedFloat(h, mn, mx, res)
-		table.insert(out, { op = op, ok = ok, bits = serialize._family("float").f32bits(h.value) })
+		table.insert(out, { op = op, ok = ok, bits = require("./serialize_stream").family("float").f32bits(h.value) })
 		if ok then st.decoded = h.value else check(h.value == base, "a refused compressed_float step changed its holder") end
 		return ok
 	else

@@ -9,7 +9,7 @@
 -- a finite double that narrows to an infinity, refuses as non_finite_float.
 
 local serialize = require("./serialize")
-local float = serialize._family("float")
+local float = require("./serialize_stream").family("float")
 local inputs = require("./inputs")
 
 local FROUND = {
@@ -268,9 +268,10 @@ local function runDouble(): number
 end
 
 -- testFiniteWrites pins the write half of the finite rule (STANDARD.md,
--- "Finite values only, every one bit exact"): each non-finite value refuses as
--- non_finite_float, writes nothing and latches; a finite double above FLT_MAX
--- narrows to an infinity and refuses the same way, while FLT_MAX itself and
+-- "Finite values only, every one bit exact"): each non-finite value is write
+-- misuse and traps (IMPLEMENTING.md U9), writes nothing and latches nothing; a
+-- finite double above FLT_MAX narrows to an infinity and traps the same way,
+-- while FLT_MAX itself and
 -- the largest double that rounds down to it are written. Negative zero and a
 -- subnormal round trip bit exact.
 local function testFiniteWrites()
@@ -278,16 +279,20 @@ local function testFiniteWrites()
 	local nonFinite = { NAN, -NAN, math.huge, -math.huge, 3.4028235677973366e+38, -1e39 }
 	for i, value in nonFinite do
 		local w = serialize.WriteStream.new(buffer.create(8))
-		check(not w:serializeFloat({ value = value }), "float non-finite case " .. i .. " was written")
-		check(w:error() == serialize.SerializeError.NonFiniteFloat, "float non-finite case " .. i .. " refused for " .. tostring(w:error()))
+		check(not pcall(w.serializeFloat, w, { value = value }), "float non-finite case " .. i .. " did not trap")
+		check(w:error() == nil, "float non-finite case " .. i .. " latched " .. tostring(w:error()))
 		check(w:bitsProcessed() == 0, "float non-finite case " .. i .. " wrote bits")
-		check(not w:serializeFloat({ value = 1.0 }), "float non-finite case " .. i .. " did not latch")
+		check(w:serializeFloat({ value = 1.0 }), "float non-finite case " .. i .. " failed a later write")
+		local m = serialize.MeasureStream.new()
+		check(not pcall(m.serializeFloat, m, { value = value }), "float non-finite case " .. i .. " did not trap on measure (U6)")
 	end
 	for i, value in { NAN, -NAN, math.huge, -math.huge } do
 		local w = serialize.WriteStream.new(buffer.create(8))
-		check(not w:serializeDouble({ value = value }), "double non-finite case " .. i .. " was written")
-		check(w:error() == serialize.SerializeError.NonFiniteFloat, "double non-finite case " .. i .. " refused for " .. tostring(w:error()))
+		check(not pcall(w.serializeDouble, w, { value = value }), "double non-finite case " .. i .. " did not trap")
+		check(w:error() == nil, "double non-finite case " .. i .. " latched " .. tostring(w:error()))
 		check(w:bitsProcessed() == 0, "double non-finite case " .. i .. " wrote bits")
+		local m = serialize.MeasureStream.new()
+		check(not pcall(m.serializeDouble, m, { value = value }), "double non-finite case " .. i .. " did not trap on measure (U6)")
 	end
 	for _, value in { 3.4028234663852886e+38, 3.4028235677973362e+38, -0.0, 1.401298464324817e-45 } do
 		local w = serialize.WriteStream.new(buffer.create(8))
@@ -335,9 +340,9 @@ function T.TestSerializeFloat()
 
 	local full = serialize.WriteStream.new(buffer.create(8))
 	check(full:serializeFloat({ value = 1.0 }) and full:serializeFloat({ value = 2.0 }), "float writes")
-	check(full:serializeDouble({ value = 1.0 }) == false, "a double past the end refuses")
-	check(full:error() == serialize.SerializeError.PastEnd, "the refusal is PastEnd")
-	check(full:bitsProcessed() == 64, "the refused wide write wrote nothing")
+	check(not pcall(full.serializeDouble, full, { value = 1.0 }), "a double past the end did not trap (U9)")
+	check(full:error() == nil, "the trap latched " .. tostring(full:error()))
+	check(full:bitsProcessed() == 64, "the trapped wide write wrote something")
 
 	testFiniteWrites()
 end

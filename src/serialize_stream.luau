@@ -69,6 +69,8 @@ end
 local RAISE_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple of 8 bytes"
 local RAISE_NOT_AN_OBJECT = "serialize: serializeObject requires a table with a serialize method"
 local RAISE_REJECT_NOT_READ = "serialize: reject is read only; a write or measure stream has nothing to refuse"
+local RAISE_ROOM = "serialize: the write does not fit the room left in the buffer"
+local RAISE_LATCH = "serialize: internal: a write or measure stream never latches a reason (IMPLEMENTING.md U9)"
 
 -- THE FAMILY LOADER (DESIGN.md (f) and (h)). The one require in the library
 -- that is not a literal: its path is always "./serialize_" .. name with name
@@ -162,8 +164,9 @@ end
 -- _misuse is caller misuse found by an arm (a bad declaration, a holder or
 -- parameter of the wrong type). A read never traps (IMPLEMENTING.md U7, U16):
 -- it refuses ValueOutOfRange through the one latch, so a stream that already
--- failed keeps its first reason. A write or a measure raises, naming the rule,
--- this port's write-misuse mechanism (DESIGN.md (a)).
+-- failed keeps its first reason. A write or a measure traps: it raises,
+-- naming the rule, and latches nothing, this port's one write-misuse mechanism
+-- (IMPLEMENTING.md U9, U6; DESIGN.md (a)).
 function Shared._misuse(self: any, message: string): boolean
 	if self._kind == "read" then
 		return self:_fail(SerializeError.ValueOutOfRange)
@@ -206,6 +209,12 @@ function Shared.serializeObject(self: any, object: any): boolean
 		return false
 	end
 	local ok, err = (method :: any)(object, self)
+	if not ok and self._kind ~= "read" then
+		-- a nested object returning false on a write or a measure makes the
+		-- object operation return false and records nothing (IMPLEMENTING.md
+		-- U9, U6)
+		return false
+	end
 	if not ok then
 		-- an error value outside the closed list is the caller refusing
 		-- without a reason of the list: rejected (IMPLEMENTING.md U14)
@@ -223,8 +232,9 @@ end
 -- ...), the ReadStream method family.read<Suffix>(stream, ...) and the
 -- MeasureStream method family.measure<Suffix>(stream, ...). Each arm does
 -- the whole operation in serialize.go's order: API misuse first (s:_misuse,
--- a raise on write and measure, a ValueOutOfRange refusal on read), refuse
--- on a latched stream, then the refusals and the bits.
+-- a trap on write and measure, a ValueOutOfRange refusal on read), refuse
+-- on a latched stream (read only: a write or a measure never latches, U9),
+-- then the refusals (read) or the room check (a trap on write), then the bits.
 local DISPATCH: { { string } } = {
 	{ "serializeBits", "bits", "Bits" },
 	{ "serializeBits64", "bits", "Bits64" },
@@ -276,6 +286,13 @@ end
 -- WriteStream (serialize.go WriteStream; DESIGN.md (g): the writer is STRICT).
 
 local WriteStream = class("write")
+
+-- _fail on a write stream: write misuse never latches (IMPLEMENTING.md U9).
+-- Every write arm traps through _misuse instead, so reaching this is a bug in
+-- this library, and it traps rather than record a reason.
+function WriteStream._fail(_self: any, _kind: any): boolean
+	error(RAISE_LATCH, 2)
+end
 
 for _, row in FIXED do
 	local method, name, arm = row[1], row[2], "write" .. row[3]
@@ -361,7 +378,7 @@ function WriteStream.serializeAlign(self: any): boolean
 		return true
 	end
 	if self._bits + n > self._numBits then
-		return self:_fail(SerializeError.PastEnd)
+		return self:_misuse(RAISE_ROOM)
 	end
 	self:_writeBits(0, n)
 	return true
@@ -369,7 +386,7 @@ end
 
 -- serializeEnd writes the end of the object, which is nothing at all
 -- (STANDARD.md end): the writer leaves the final byte's unused bits zero.
--- A latched stream refuses.
+-- A no-op returning true (IMPLEMENTING.md U12).
 function WriteStream.serializeEnd(_self: any): boolean
 	return true
 end
@@ -547,11 +564,30 @@ end
 
 local MeasureStream = class("measure")
 
+-- _fail on a measure stream: a measure refuses nothing and latches nothing
+-- (IMPLEMENTING.md U6, U9); as on a write, reaching this is a library bug.
+function MeasureStream._fail(_self: any, _kind: any): boolean
+	error(RAISE_LATCH, 2)
+end
+
+-- The fixed widths on a measure run the family's WRITE arm whole, over the
+-- counting primitives below, so a measure makes exactly the checks a write
+-- makes, by the same trap, except room, which an unbounded measure always has
+-- (IMPLEMENTING.md U6).
 for _, row in FIXED do
-	local method, width = row[1], row[4]
-	MeasureStream[method] = function(self: any, _holder: any): boolean
-		return self:_measure(width)
+	local method, name, arm = row[1], row[2], "write" .. row[3]
+	MeasureStream[method] = function(self: any, holder: any): boolean
+		return family(name)[arm](self, holder)
 	end
+end
+
+-- The counting primitives: a measure moves no bit, it counts them.
+function MeasureStream._writeBits(self: any, _value: number, bits: number)
+	self._bits += bits
+end
+
+function MeasureStream._writeBits64(self: any, _value: integer, bits: number)
+	self._bits += bits
 end
 
 function MeasureStream.new(): any
@@ -567,7 +603,8 @@ function MeasureStream.reset(self: any)
 	self._error = nil
 end
 
--- _measure adds bits to the count, refusing on a latched stream.
+-- _measure adds bits to the count. A measure never latches (U6), so the
+-- latch test is never true here; it is kept for the shared arm shape.
 function MeasureStream._measure(self: any, bits: number): boolean
 	if self._error ~= nil then
 		return false

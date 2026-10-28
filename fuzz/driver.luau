@@ -366,7 +366,14 @@ while base <= n do
 			cur = cur + 1
 		end
 		local prog = parseProgram(progLines)
-		local data, werr = writeProgram(prog)
+		-- write misuse traps (IMPLEMENTING.md U9): a generated program is always
+		-- well formed, so a trap is reported as a write refusal, never a crash
+		-- of the whole batch
+		local wok, data, werr = pcall(writeProgram, prog)
+		if not wok then
+			werr = "trap:" .. string.gsub(tostring(data), "%s", "_")
+			data = buffer.create(0)
+		end
 		if werr ~= nil then
 			print("WE " .. werr)
 		else

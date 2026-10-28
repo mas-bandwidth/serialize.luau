@@ -3,8 +3,9 @@
 -- serialize standard 2.1), one test per rule this port proves, each citing its
 -- number, and the 2026-10-27 audit findings (AUDIT-LEDGER.md, luau). The read
 -- side never raises: caller misuse on a read stream refuses value_out_of_range
--- (U7, U16), the failure state checked first. The write and measure side keeps
--- this port's write-misuse mechanism: a raise naming the rule (DESIGN.md (a)).
+-- (U7, U16), the failure state checked first. The write and measure side has
+-- one write-misuse mechanism, the trap (U9): a raise naming the rule, which
+-- latches nothing (DESIGN.md (a)); test/uniform/rulings_test.luau proves it.
 
 local serialize = require("./serialize")
 
@@ -61,15 +62,21 @@ function T.TestU1WriteBufferMultipleOf8()
 	end, "multiple of 8 bytes")
 end
 
--- U3, U4: the writer and the measure refuse text a reader would refuse, for
--- the reader's reason, NUL first; nothing differing from the value is sent.
+-- U3, U4: the writer and the measure trap on text a reader would refuse,
+-- naming the reader's reason, NUL first, and latch nothing (U9, U6); nothing
+-- differing from the value is sent.
 function T.TestU3MeasureStringRefusesWhatTheWriterRefuses()
 	for _, case in { { "a\0b", reasons.EmbeddedNul }, { "\xff", reasons.InvalidUtf8 }, { "\xed\xa0\x80", reasons.InvalidUtf8 } } do
 		local w = serialize.WriteStream.new(buffer.create(16))
-		check(w:serializeString({ value = case[1] }, 16) == false and w:error() == case[2], "write latched " .. tostring(w:error()))
-		check(w:bitsProcessed() == 0, "the writer sent bits for refused text")
+		raises(function()
+			return w:serializeString({ value = case[1] }, 16)
+		end, case[2])
+		check(w:ok() and w:bitsProcessed() == 0, "the writer latched or sent bits for refused text")
 		local m = serialize.MeasureStream.new()
-		check(m:serializeString({ value = case[1] }, 16) == false and m:error() == case[2], "measure latched " .. tostring(m:error()) .. ", want " .. case[2])
+		raises(function()
+			return m:serializeString({ value = case[1] }, 16)
+		end, case[2])
+		check(m:ok() and m:bitsProcessed() == 0, "the measure latched or counted refused text")
 	end
 end
 
@@ -206,13 +213,16 @@ end
 -- U12: end on a write or a measure is a no-op returning true.
 function T.TestU12EndOnWriteAndMeasure()
 	local w = serialize.WriteStream.new(buffer.create(8))
-	check(w:serializeBits64({ value = 0i }, 64) and w:serializeBits({ value = 0 }, 1) == false, "the writer latches past_end")
-	check(w:serializeEnd() == true and w:bitsProcessed() == 64, "a latched writer's end is not a no-op returning true")
+	check(w:serializeBits64({ value = 0i }, 64), "the writer fills")
+	raises(function()
+		return w:serializeBits({ value = 0 }, 1)
+	end, "room left")
+	check(w:serializeEnd() == true and w:bitsProcessed() == 64, "a full writer's end is not a no-op returning true")
 	local m = serialize.MeasureStream.new()
-	m:serializeObject({ serialize = function(): boolean
+	check(m:serializeObject({ serialize = function(): boolean
 		return false
-	end })
-	check(m:serializeEnd() == true and m:bitsProcessed() == 0, "a latched measure's end is not a no-op returning true")
+	end }) == false, "a failing object on a measure did not return false")
+	check(m:serializeEnd() == true and m:bitsProcessed() == 0, "a measure's end after a failing object is not a no-op returning true")
 end
 
 -- U14: the refusal-name function, "none" for no refusal, and a public fail;

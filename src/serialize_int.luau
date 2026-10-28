@@ -3,11 +3,12 @@
 -- STANDARD.md, Integers: int (ranged) and int64 (ranged)).
 --
 -- The stream dispatches serializeInt and serializeInt64 here; each arm does
--- the whole operation in serialize.go v2.0.0's order: raise on API misuse
--- (a min greater than max), refuse a latched stream, refuse a value outside
--- [min,max] with ValueOutOfRange, refuse a write that does not fit with
--- PastEnd, then move the offset in the operation's unsigned domain so a span
--- wider than 2^31 (or 2^63) is exact (STANDARD.md, int (ranged)).
+-- the whole operation in serialize.go v2.0.0's order: misuse first (a min
+-- greater than max), then on write and measure a value outside [min,max] and
+-- a write that does not fit the room left trap (IMPLEMENTING.md U9, U6: write
+-- misuse never latches), and on read an offset past the span refuses
+-- ValueOutOfRange; the offset moves in the operation's unsigned domain so a
+-- span wider than 2^31 (or 2^63) is exact (STANDARD.md, int (ranged)).
 --
 -- A degenerate range min == max costs zero bits and takes its value from the
 -- range (STANDARD.md, int (ranged)). The bitsRequired functions live here as
@@ -21,6 +22,12 @@ local RAISE_INT64 = "serialize: serializeInt64 parameters must be integers"
 
 local PAST_END = "past_end"
 local OUT_OF_RANGE = "value_out_of_range"
+
+-- The write-misuse traps (IMPLEMENTING.md U9): a value outside [min,max] and
+-- an operation that does not fit the room left raise on write and measure
+-- (the measure has no room to check, U6), never latch.
+local RAISE_RANGE = "serialize: ranged integer value must be in [min,max]"
+local RAISE_ROOM = "serialize: the write does not fit the room left in the buffer"
 
 local INT32_MIN = -2147483648
 local INT32_MAX = 2147483647
@@ -37,7 +44,7 @@ end
 -- bitsRequired is serialize.go BitsRequired over the unsigned 32-bit domain
 -- (STANDARD.md, int (ranged)): zero for a degenerate range, else the width of
 -- max - min. span is an exact double for every int32 range (at most 2^32 - 1).
-function bitsRequired(min: number, max: number): number
+local function bitsRequired(min: number, max: number): number
 	if min == max then
 		return 0
 	end
@@ -48,7 +55,7 @@ end
 -- bitsRequired64 is serialize.go BitsRequired64: the subtraction is in the
 -- unsigned 64-bit domain, so a range wider than 2^63 is exact (STANDARD.md,
 -- int64 (ranged)).
-function bitsRequired64(min: integer, max: integer): number
+local function bitsRequired64(min: integer, max: integer): number
 	if min == max then
 		return 0
 	end
@@ -57,7 +64,7 @@ end
 
 -- writeInt: STANDARD.md, int (ranged). min <= max, the value in [min,max],
 -- and offset value - min in uint32.
-function writeInt(s: any, holder: any, min: number, max: number): boolean
+local function writeInt(s: any, holder: any, min: number, max: number): boolean
 	if not isInt32(min) or not isInt32(max) or not isInt32(holder.value) then
 		return s:_misuse(RAISE_INT32)
 	end
@@ -69,14 +76,14 @@ function writeInt(s: any, holder: any, min: number, max: number): boolean
 	end
 	local value = holder.value
 	if value < min or value > max then
-		return s:_fail(OUT_OF_RANGE)
+		return s:_misuse(RAISE_RANGE)
 	end
 	local bits = bitsRequired(min, max)
 	if s._kind == "measure" then
 		return s:_measure(bits)
 	end
 	if s:_available() < bits then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	if bits > 0 then
 		s:_writeBits((value - min) % TWO32, bits)
@@ -84,7 +91,7 @@ function writeInt(s: any, holder: any, min: number, max: number): boolean
 	return true
 end
 
-function readInt(s: any, holder: any, min: number, max: number): boolean
+local function readInt(s: any, holder: any, min: number, max: number): boolean
 	if not isInt32(min) or not isInt32(max) then
 		return s:_misuse(RAISE_INT32)
 	end
@@ -112,7 +119,7 @@ function readInt(s: any, holder: any, min: number, max: number): boolean
 	return true
 end
 
-function measureInt(s: any, holder: any, min: number, max: number): boolean
+local function measureInt(s: any, holder: any, min: number, max: number): boolean
 	if not isInt32(min) or not isInt32(max) or not isInt32(holder.value) then
 		return s:_misuse(RAISE_INT32)
 	end
@@ -123,14 +130,14 @@ function measureInt(s: any, holder: any, min: number, max: number): boolean
 		return false
 	end
 	if holder.value < min or holder.value > max then
-		return s:_fail(OUT_OF_RANGE)
+		return s:_misuse(RAISE_RANGE)
 	end
 	return s:_measure(bitsRequired(min, max))
 end
 
 -- writeInt64: STANDARD.md, int64 (ranged). The offset is uint64(v) - uint64(min),
 -- written as one group when bits <= 32 and otherwise low 32 bits then high.
-function writeInt64(s: any, holder: any, min: integer, max: integer): boolean
+local function writeInt64(s: any, holder: any, min: integer, max: integer): boolean
 	if not isInteger(min) or not isInteger(max) or not isInteger(holder.value) then
 		return s:_misuse(RAISE_INT64)
 	end
@@ -142,14 +149,14 @@ function writeInt64(s: any, holder: any, min: integer, max: integer): boolean
 	end
 	local value = holder.value
 	if integer.lt(value, min) or integer.gt(value, max) then
-		return s:_fail(OUT_OF_RANGE)
+		return s:_misuse(RAISE_RANGE)
 	end
 	local bits = bitsRequired64(min, max)
 	if s._kind == "measure" then
 		return s:_measure(bits)
 	end
 	if s:_available() < bits then
-		return s:_fail(PAST_END)
+		return s:_misuse(RAISE_ROOM)
 	end
 	if bits > 0 then
 		s:_writeBits64(integer.sub(value, min), bits)
@@ -157,7 +164,7 @@ function writeInt64(s: any, holder: any, min: integer, max: integer): boolean
 	return true
 end
 
-function readInt64(s: any, holder: any, min: integer, max: integer): boolean
+local function readInt64(s: any, holder: any, min: integer, max: integer): boolean
 	if not isInteger(min) or not isInteger(max) then
 		return s:_misuse(RAISE_INT64)
 	end
@@ -183,7 +190,7 @@ function readInt64(s: any, holder: any, min: integer, max: integer): boolean
 	return true
 end
 
-function measureInt64(s: any, holder: any, min: integer, max: integer): boolean
+local function measureInt64(s: any, holder: any, min: integer, max: integer): boolean
 	if not isInteger(min) or not isInteger(max) or not isInteger(holder.value) then
 		return s:_misuse(RAISE_INT64)
 	end
@@ -194,7 +201,7 @@ function measureInt64(s: any, holder: any, min: integer, max: integer): boolean
 		return false
 	end
 	if integer.lt(holder.value, min) or integer.gt(holder.value, max) then
-		return s:_fail(OUT_OF_RANGE)
+		return s:_misuse(RAISE_RANGE)
 	end
 	return s:_measure(bitsRequired64(min, max))
 end

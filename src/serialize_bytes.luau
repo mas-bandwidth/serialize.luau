@@ -21,6 +21,17 @@ local ValueOutOfRange = Stream.SerializeError.ValueOutOfRange
 local InvalidUtf8 = Stream.SerializeError.InvalidUtf8
 local EmbeddedNul = Stream.SerializeError.EmbeddedNul
 
+-- The write-misuse traps (IMPLEMENTING.md U9, U6, U3, U4): text a reader
+-- would refuse, text longer than buffer_size - 1 and an operation that does
+-- not fit the room left raise on write and measure (the measure has no room
+-- to check), never latch.
+local RAISE_RANGE = "serialize: serializeString value must be at most buffer size - 1 bytes"
+local RAISE_ROOM = "serialize: the write does not fit the room left in the buffer"
+local RAISE_TEXT: { [string]: string } = {
+	[EmbeddedNul] = "serialize: serializeString value must not hold a NUL (embedded_nul)",
+	[InvalidUtf8] = "serialize: serializeString value must be well-formed UTF-8 (invalid_utf8)",
+}
+
 local M: { [string]: any } = {}
 
 -- serialize_bitpacker.luau may not be on this card's base yet. When it is,
@@ -232,7 +243,7 @@ function M.writeBytes(s: any, data: any): boolean
 	local count = buffer.len(data)
 	local align = s:_alignBits()
 	if s._bits + align + count * 8 > s._numBits then
-		return s:_fail(PastEnd)
+		return s:_misuse(RAISE_ROOM)
 	end
 	writeBitsRaw(s, 0, align)
 	if count > 0 then
@@ -287,8 +298,9 @@ end
 -- ---------------------------------------------------------------------------
 -- string (STANDARD.md string; DESIGN.md (g): length, align, bytes; the reader
 -- refuses a zero byte with EmbeddedNul, then malformed UTF-8 with InvalidUtf8,
--- and the writer refuses the same payloads for the same reasons: a writer is
--- handed well-formed UTF-8 with no zero byte).
+-- and the writer and the measure trap on the same payloads, naming the same
+-- reasons, and latch nothing: a writer is handed well-formed UTF-8 with no
+-- zero byte; IMPLEMENTING.md U3, U4, U9).
 
 function M.writeString(s: any, holder: any, bufferSize: any): boolean
 	if type(holder) ~= "table" then
@@ -308,16 +320,16 @@ function M.writeString(s: any, holder: any, bufferSize: any): boolean
 	local length = #value
 	local maxLength = bufferSize - 1
 	if length >= bufferSize then
-		return s:_fail(ValueOutOfRange)
+		return s:_misuse(RAISE_RANGE)
 	end
 	local refusal = textRefusal(value)
 	if refusal ~= nil then
-		return s:_fail(refusal)
+		return s:_misuse(RAISE_TEXT[refusal])
 	end
 	local lengthBits = bitsRequired(0, maxLength)
 	local align = (8 - (s._bits + lengthBits) % 8) % 8
 	if s._bits + lengthBits + align + length * 8 > s._numBits then
-		return s:_fail(PastEnd)
+		return s:_misuse(RAISE_ROOM)
 	end
 	writeLength(s, length, maxLength)
 	writeBitsRaw(s, 0, align)
@@ -390,13 +402,13 @@ function M.measureString(s: any, holder: any, bufferSize: any): boolean
 	end
 	local length = #holder.value
 	if length >= bufferSize then
-		return s:_fail(ValueOutOfRange)
+		return s:_misuse(RAISE_RANGE)
 	end
-	-- the measure refuses the text the writer refuses, for the writer's
-	-- reason (IMPLEMENTING.md U3, U6)
+	-- the measure traps on the text the writer traps on, by the same
+	-- trap (IMPLEMENTING.md U3, U6, U9)
 	local refusal = textRefusal(holder.value)
 	if refusal ~= nil then
-		return s:_fail(refusal)
+		return s:_misuse(RAISE_TEXT[refusal])
 	end
 	if not s:_measure(bitsRequired(0, bufferSize - 1)) then
 		return false

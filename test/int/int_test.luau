@@ -380,7 +380,9 @@ function tests.TestSerializeInt64FullRange()
 	end
 end
 
-function tests.TestIntBoundsLatch()
+-- A value outside [min,max] is write misuse: it traps on write and on measure
+-- (IMPLEMENTING.md U9, U6), moves no bit and latches nothing.
+function tests.TestIntBoundsTrap()
 	local cases = {
 		{ "int", 0, 7, 8, -1 },
 		{ "int64", 0i, 7i, 8i, -1i },
@@ -392,20 +394,18 @@ function tests.TestIntBoundsLatch()
 		for _, value in { above, below } do
 			local ws = serialize.WriteStream.new(buffer.create(8))
 			local h = { value = value }
-			if ws[arms.open](ws, h, min, max) then
-				fail(name .. ": out of range value was written")
+			if pcall(ws[arms.open], ws, h, min, max) then
+				fail(name .. ": out of range value did not trap on write")
 			end
-			if ws:error() ~= "value_out_of_range" then
-				fail(name .. ": expected value_out_of_range, got " .. tostring(ws:error()))
-			end
+			eq(ws:error(), nil, name .. ": the write trap latched")
 			if ws:bitsProcessed() ~= 0 then
-				fail(name .. ": refusal moved bits")
+				fail(name .. ": the trap moved bits")
 			end
 			local ms = serialize.MeasureStream.new()
-			if ms[arms.open](ms, h, min, max) then
-				fail(name .. ": out of range value was measured")
+			if pcall(ms[arms.open], ms, h, min, max) then
+				fail(name .. ": out of range value did not trap on measure")
 			end
-			eq(ms:error(), "value_out_of_range", name .. ": measure latch")
+			eq(ms:error(), nil, name .. ": the measure trap latched")
 		end
 	end
 end

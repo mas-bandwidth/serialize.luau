@@ -17,7 +17,9 @@ if not r:serializeObject(message) or not r:serializeEnd() then
 end
 ```
 
-Standard 2.1's uniform rules (IMPLEMENTING.md U1 to U16) are kept and proved in test/uniform: a read never raises (caller misuse on read refuses `value_out_of_range`), `serialize.refusalName`, `stream:fail(reason)` and `serialize.copyString` are public, and a writer's buffer is unspecified until `flush()`.
+Standard 2.1's uniform rules (IMPLEMENTING.md U1 to U16, with the 2.1.1 rulings) are kept and proved in test/uniform: a read never raises (caller misuse on read refuses `value_out_of_range`), `serialize.refusalName`, `stream:fail(reason)` and `serialize.copyString` are public, and a writer's buffer is unspecified until `flush()`.
+
+Write misuse traps (IMPLEMENTING.md U9): a value outside its range or width, a non-finite float, double or compressed float, a bad declaration, text that is not well-formed UTF-8, holds a NUL or does not fit `bufferSize - 1`, a write buffer that is not a multiple of 8 bytes, and a write that does not fit the room left all raise a Luau error naming the rule, `serialize: ...`, at the call, in every run (this port has no unchecked build). A trap latches nothing: the stream records no reason and keeps working. A measure stream makes the same checks by the same trap (U6). Refusal reasons belong to readers only.
 
 DESIGN.md is the design: the API, the refusal reasons, the bit order, the number model, the file layout and the runner.
 

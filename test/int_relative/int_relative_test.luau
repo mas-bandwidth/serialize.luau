@@ -255,13 +255,14 @@ local function validation()
 		end
 	end
 
-	-- a write past current's domain latches rather than wrapping
+	-- a write past current's domain traps rather than wrapping, and latches
+	-- nothing (IMPLEMENTING.md U9)
 	do
 		local w = serialize.WriteStream.new(buffer.create(8))
 		local h = { value = 2147483648 }
-		check(not w:serializeIntRelative(0, h), "a current above the domain is refused")
-		check(w:error() == serialize.SerializeError.ValueOutOfRange, "a current above the domain latches value out of range")
-		check(w:bitsProcessed() == 0, "a refused write writes nothing")
+		check(not pcall(w.serializeIntRelative, w, 0, h), "a current above the domain did not trap")
+		check(w:error() == nil, "a current above the domain latched " .. tostring(w:error()))
+		check(w:bitsProcessed() == 0, "a trapped write writes nothing")
 	end
 end
 

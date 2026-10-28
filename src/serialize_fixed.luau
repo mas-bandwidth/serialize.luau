@@ -27,6 +27,10 @@ end
 local VALUE_OUT_OF_RANGE = "value_out_of_range"
 local PAST_END = "past_end"
 
+-- The write-misuse traps (IMPLEMENTING.md U9, U6): raised, never latched.
+local RAISE_RANGE = "serialize: fixed point value must be in [min,max] whole units"
+local RAISE_ROOM = "serialize: the write does not fit the room left in the buffer"
+
 -- Misuse raises: serialize.go's panic text, raised naming the rule (serialize.go
 -- serialize.go panicFixedParams, panicFixedBounds; DESIGN.md (g)).
 local RAISE_PARAMS = "serialize: fixed point requires integer bits >= 1, fraction bits >= 0, a Q format that fits the storage width, and min <= max"
@@ -213,10 +217,10 @@ local function writeFixed64(self: any, h: { value: integer }, integerBits: numbe
 	end
 	local offset = integer.sub(h.value, rawMin)
 	if integer.ugt(offset, rawRange) then
-		return self:_fail(VALUE_OUT_OF_RANGE)
+		return self:_misuse(RAISE_RANGE)
 	end
 	if self:_available() < numBits then
-		return self:_fail(PAST_END)
+		return self:_misuse(RAISE_ROOM)
 	end
 	if numBits > 0 then
 		self:_writeBits64(offset, numBits)
@@ -258,7 +262,7 @@ local function measureFixed64(self: any, h: { value: integer }, integerBits: num
 	end
 	local offset = integer.sub(h.value, rawMin)
 	if integer.ugt(offset, rawRange) then
-		return self:_fail(VALUE_OUT_OF_RANGE)
+		return self:_misuse(RAISE_RANGE)
 	end
 	return self:_measure(numBits)
 end
@@ -277,10 +281,10 @@ local function writeFixed128(self: any, h: { value: U128 }, integerBits: number,
 	end
 	local offset = subU({ lo = h.value.lo, hi = h.value.hi }, rawMin)
 	if cmpU(offset, rawRange) > 0 then
-		return self:_fail(VALUE_OUT_OF_RANGE)
+		return self:_misuse(RAISE_RANGE)
 	end
 	if self:_available() < numBits then
-		return self:_fail(PAST_END)
+		return self:_misuse(RAISE_ROOM)
 	end
 	if numBits > 0 then
 		if numBits <= 64 then
@@ -335,7 +339,7 @@ local function measureFixed128(self: any, h: { value: U128 }, integerBits: numbe
 	end
 	local offset = subU({ lo = h.value.lo, hi = h.value.hi }, rawMin)
 	if cmpU(offset, rawRange) > 0 then
-		return self:_fail(VALUE_OUT_OF_RANGE)
+		return self:_misuse(RAISE_RANGE)
 	end
 	return self:_measure(numBits)
 end
