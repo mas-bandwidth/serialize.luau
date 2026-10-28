@@ -21,10 +21,10 @@ imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/*.txt`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.0
-(`884bc3098c9619d67308d9c6b5cdf38593d98b69`; format 2.0, standard 2.1: the
+VERBATIM from mas-bandwidth/serialize at tag v2.1.1
+(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`; format 2.0, standard 2.1 with the 2.1.1 rulings, U3, U6, U9 and U15: the
 `rejected` refusal reason and its `reject` vectors) by
-`tools/revendor/revendor.sh v2.1.0`,
+`tools/revendor/revendor.sh v2.1.1`,
 which diffs them against the tag's own copies. CI's corpus job diffs all
 four against the pin on every run. None is edited here; a change arrives by
 re-vendoring from a new tag or commit.
