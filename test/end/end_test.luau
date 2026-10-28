@@ -72,7 +72,8 @@ function T.TestSerializeEnd()
 	check(r:serializeEnd() == false and r:error() == reasons.ValueOutOfRange, "the end keeps the first reason")
 
 	-- a writer's end emits nothing; a measure's costs nothing; on either it is a
-	-- no-op returning true, latched or not (IMPLEMENTING.md U12)
+	-- no-op returning true, after a trap too (IMPLEMENTING.md U12; a write
+	-- that does not fit traps and latches nothing, U9)
 	local w = serialize.WriteStream.new(buffer.create(8))
 	check(w:serializeBits({ value = 5 }, 3) and w:serializeEnd(), "a writer ends")
 	check(w:bitsProcessed() == 3, "a writer's end wrote bits")
@@ -81,8 +82,11 @@ function T.TestSerializeEnd()
 	local m = serialize.MeasureStream.new()
 	check(m:serializeEnd() and m:bitsProcessed() == 0, "a measure's end cost bits")
 	local full = serialize.WriteStream.new(buffer.create(8))
-	check(full:serializeUint64({ value = 0i }) and full:serializeBool({ value = true }) == false, "a full writer refuses")
-	check(full:serializeEnd() == true and full:error() == serialize.SerializeError.PastEnd, "a latched writer's end is not a no-op returning true")
+	check(full:serializeUint64({ value = 0i }), "the writer fills")
+	check(not pcall(function()
+		return full:serializeBool({ value = true })
+	end), "a write past the end did not trap")
+	check(full:serializeEnd() == true and full:error() == nil and full:bitsProcessed() == 64, "a full writer's end is not a no-op returning true")
 end
 
 return T

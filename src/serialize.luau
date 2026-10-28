@@ -90,8 +90,4 @@ function S.compressedFloatParams(min: number, max: number, resolution: number): 
 	return family("compressed_float").compressedFloatParams(min, max, resolution)
 end
 
--- _family is the lazy loader, exposed for the skeleton's own test
--- (test/smoke) and for nothing else.
-S._family = family
-
 return table.freeze(S)

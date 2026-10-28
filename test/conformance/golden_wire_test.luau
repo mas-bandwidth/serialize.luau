@@ -79,7 +79,7 @@ local function expectedData()
 	d.intSmall = -37
 	d.intFull = -123456789
 	d.flag = true
-	d.floatValue = serialize._family("float").f32frombits(serialize._family("float").f32bits(3.1415926))
+	d.floatValue = require("./serialize_stream").family("float").f32frombits(require("./serialize_stream").family("float").f32bits(3.1415926))
 	d.compressedFloatValue = 5.0
 	d.doubleValue = 1.0 / 3.0
 	d.uint8Value = 0x7F

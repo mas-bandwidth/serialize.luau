@@ -11,8 +11,9 @@
 --      terminal; every `writer canonical` record is reproduced byte for byte;
 --   2. the string length fit check at its boundary
 --      (TestStringLengthValidatedBeforeNarrowing);
---   3. the writer refuses what a reader refuses, for the same reason, in the
---      same order (TestStringWriterRefusesWhatReadersRefuse);
+--   3. the writer traps on what a reader refuses, naming the same reason, in
+--      the same order, and latches nothing (IMPLEMENTING.md U9)
+--      (TestStringWriterRefusesWhatReadersRefuse);
 --   4. a wire-claimed length is checked against the bytes left before
 --      anything that size is allocated (TestStringClaimCheckedBeforeAllocation).
 
@@ -149,7 +150,7 @@ local function setPosition(stream: any, bits: number)
 		return
 	end
 	local hasBitpacker = pcall(function()
-		return serialize._family("bitpacker")
+		return require("./serialize_stream").family("bitpacker")
 	end)
 	if hasBitpacker then
 		if stream:isReading() then
@@ -282,6 +283,17 @@ function T.TestSerializeStrings()
 	print(string.format("strings: %d records", total))
 end
 
+-- trapsWith requires op to trap (IMPLEMENTING.md U9) with a raise naming
+-- want, latch nothing on stream and move no bit.
+local function trapsWith(stream: any, op: () -> any, want: string, what: string)
+	local before = stream:bitsProcessed()
+	local ok, err = pcall(op)
+	check(not ok, what .. ": did not trap")
+	check(string.find(tostring(err), want, 1, true) ~= nil, what .. ": trapped with " .. tostring(err) .. ", want " .. want)
+	check(stream:error() == nil, what .. ": latched " .. tostring(stream:error()))
+	check(stream:bitsProcessed() == before, what .. ": moved bits")
+end
+
 function T.TestStringLengthValidatedBeforeNarrowing()
 	-- The fit check is length < bufferSize at the caller's own width, before
 	-- the length field is formed. Each out of range case carries its negative
@@ -293,17 +305,15 @@ function T.TestStringLengthValidatedBeforeNarrowing()
 	local write = serialize.WriteStream.new(buffer.create(256))
 	check(write:serializeString({ value = fits }, bufferSize),
 		"a length of " .. (bufferSize - 1) .. " must fit a buffer of " .. bufferSize)
-	check(write:serializeString({ value = over }, bufferSize) == false,
-		"a length of " .. bufferSize .. " must not fit a buffer of " .. bufferSize)
-	check(errorIs(write, serialize.SerializeError.ValueOutOfRange),
-		"the over-length latch is not ValueOutOfRange")
+	trapsWith(write, function()
+		return write:serializeString({ value = over }, bufferSize)
+	end, "buffer size - 1", "a length of " .. bufferSize .. " in a buffer of " .. bufferSize)
 
 	local measure = serialize.MeasureStream.new()
 	check(measure:serializeString({ value = fits }, bufferSize), "the fitting measure was refused")
-	check(measure:serializeString({ value = over }, bufferSize) == false,
-		"the over-length measure was accepted")
-	check(errorIs(measure, serialize.SerializeError.ValueOutOfRange),
-		"the measure latch is not ValueOutOfRange")
+	trapsWith(measure, function()
+		return measure:serializeString({ value = over }, bufferSize)
+	end, "buffer size - 1", "the over-length measure")
 
 	-- bufferSize itself has serialize.go's panicBufferSize domain, which is
 	-- what makes the 32-bit length field total.
@@ -319,8 +329,9 @@ end
 
 function T.TestStringWriterRefusesWhatReadersRefuse()
 	-- A writer is handed well-formed UTF-8 with no zero byte (STANDARD.md
-	-- string). Handed anything else it refuses for the reason a reader would
-	-- give the same payload, NUL first, and writes nothing.
+	-- string). Handed anything else it traps (IMPLEMENTING.md U9), naming the
+	-- reason a reader would give the same payload, NUL first, writes nothing
+	-- and latches nothing; a measure traps the same way (U6).
 	local cases = {
 		{ "a\0b", serialize.SerializeError.EmbeddedNul },
 		{ "\0", serialize.SerializeError.EmbeddedNul },
@@ -332,9 +343,13 @@ function T.TestStringWriterRefusesWhatReadersRefuse()
 	}
 	for i, case in cases do
 		local write = serialize.WriteStream.new(buffer.create(64))
-		check(write:serializeString({ value = case[1] }, 64) == false, "writer case " .. i .. " was written")
-		check(errorIs(write, case[2]), "writer case " .. i .. " refused for " .. tostring(write:error()) .. ", want " .. case[2])
-		check(write:bitsProcessed() == 0, "writer case " .. i .. " wrote bits")
+		trapsWith(write, function()
+			return write:serializeString({ value = case[1] }, 64)
+		end, case[2], "writer case " .. i)
+		local measure = serialize.MeasureStream.new()
+		trapsWith(measure, function()
+			return measure:serializeString({ value = case[1] }, 64)
+		end, case[2], "measure case " .. i)
 	end
 	-- Real text in every script travels: the writer accepts it and the reader
 	-- hands back exactly the bytes, with no normalization.

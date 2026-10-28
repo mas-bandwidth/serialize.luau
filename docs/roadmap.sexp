@@ -6,7 +6,7 @@
 ; standard 2.1 (the wrap-up order: rejected and the re-vendor landed, the rest recorded here).
 (roadmap "v1"
  :title "serialize.luau roadmap"
- :text "Planned work for serialize.luau. Created 2026-10-27, when the port moved to serialize standard 2.1 (v2.1.0). The re-vendor, the rejected refusal reason (U2), the uniform rules U1 and U3 to U16 of IMPLEMENTING.md and the four correctness findings of the 2026-10-27 audit have landed (test/uniform); what is left is recorded here with the condition that closes it. Landed work is in git."
+ :text "Planned work for serialize.luau. Created 2026-10-27, when the port moved to serialize standard 2.1 (v2.1.0). The re-vendor, the rejected refusal reason (U2), the uniform rules U1 and U3 to U16 of IMPLEMENTING.md and the four correctness findings of the 2026-10-27 audit have landed (test/uniform), and so have the 2.1.1 rulings (U6, U9: write misuse traps and never latches; U15: copyString's byte rule and the exports; no module leaks a global; test/uniform/rulings_test.luau); what is left is recorded here with the condition that closes it. Landed work is in git."
 
  :groups
  (

@@ -107,16 +107,16 @@ function T.TestSmoke()
 	-- THE LAZY DISPATCH: a family whose file is absent raises its
 	-- not-implemented error by name, on the first call that needs it.
 	raises(function()
-		serialize._family("smoke_absent")
+		require("./serialize_stream").family("smoke_absent")
 	end, "serialize: smoke_absent not implemented")
 	-- A family name that is not a module name never reaches require.
 	raises(function()
-		serialize._family("../serialize_stream")
+		require("./serialize_stream").family("../serialize_stream")
 	end, "is not a family module name")
 	-- A present family file loads, from the unit directory, once.
-	local present = serialize._family("smoke_present")
+	local present = require("./serialize_stream").family("smoke_present")
 	check(present.marker == "smoke_present from the unit", "the present family loads from the unit")
-	check(serialize._family("smoke_present") == present, "a family loads once")
+	check(require("./serialize_stream").family("smoke_present") == present, "a family loads once")
 
 	-- THE LATCH (DESIGN.md (g); STANDARD.md, Reader Obligations): on a
 	-- ReadStream over empty data a failing call latches; a later call fails,
