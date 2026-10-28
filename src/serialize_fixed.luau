@@ -134,35 +134,51 @@ local function capacity(integerBits: number, signed: boolean): { integer }
 	return { 0i, integer.sub(integer.lshift(1i, integer.create(integerBits)), 1i) }
 end
 
--- params64 validates a Q format of storage 64 bits or fewer (STANDARD.md fixed;
--- serialize.go fixedPointParams64): rawMin, rawRange (raw bounds, shifted left
--- by fractionBits, in the unsigned domain) and the bit count of the raw range.
-local function params64(integerBits: number, fractionBits: number, min: integer, max: integer): (integer, integer, number)
-	if integerBits < 1 or fractionBits < 0 or integerBits + fractionBits > 64 or integer.lt(max, min) then
-		error(RAISE_PARAMS, 2)
+-- misuse is the rule a fixed point declaration breaks, or nil (STANDARD.md
+-- fixed; serialize.go fixedPointParams64 and fixedPointParams128;
+-- IMPLEMENTING.md U16): integerBits and fractionBits integers, integerBits at
+-- least 1, fractionBits at least 0, the storage width (at most 64, or exactly
+-- 128 when wide), min and max integers with min <= max, and the bounds inside
+-- the Q format's capacity. The arm raises it on write and measure and refuses
+-- ValueOutOfRange on read (U7), before any bit moves.
+local function misuse(integerBits: any, fractionBits: any, min: any, max: any, wide: boolean): string?
+	if type(integerBits) ~= "number" or type(fractionBits) ~= "number" or integerBits // 1 ~= integerBits or fractionBits // 1 ~= fractionBits then
+		return RAISE_PARAMS
+	end
+	if typeof(min) ~= "integer" or typeof(max) ~= "integer" then
+		return RAISE_PARAMS
+	end
+	local storage = integerBits + fractionBits
+	if integerBits < 1 or fractionBits < 0 or integer.lt(max, min) then
+		return RAISE_PARAMS
+	end
+	if (wide and storage ~= 128) or (not wide and storage > 64) then
+		return RAISE_PARAMS
 	end
 	local c = capacity(integerBits, integer.lt(min, 0i))
 	if integer.lt(min, c[1]) or integer.lt(c[2], max) then
-		error(RAISE_BOUNDS, 2)
+		return RAISE_BOUNDS
 	end
+	return nil
+end
+
+-- params64 derives a validated Q format of storage 64 bits or fewer
+-- (STANDARD.md fixed; serialize.go fixedPointParams64): rawMin, rawRange (raw
+-- bounds, shifted left by fractionBits, in the unsigned domain) and the bit
+-- count of the raw range. The arm has applied misuse first.
+local function params64(integerBits: number, fractionBits: number, min: integer, max: integer): (integer, integer, number)
 	local rawMin = integer.lshift(min, integer.create(fractionBits))
 	local rawMax = integer.lshift(max, integer.create(fractionBits))
 	local rawRange = integer.sub(rawMax, rawMin)
 	return rawMin, rawRange, bitsRequired64(rawMin, rawMax)
 end
 
--- params128 validates the wide Q format, storage exactly 128 bits (STANDARD.md
--- fixed; serialize.go fixedPointParams128). A degenerate range costs zero bits
--- on every storage width; otherwise the bit count is the whole-unit range's
--- bit length plus fractionBits.
+-- params128 derives the validated wide Q format, storage exactly 128 bits
+-- (STANDARD.md fixed; serialize.go fixedPointParams128). A degenerate range
+-- costs zero bits on every storage width; otherwise the bit count is the
+-- whole-unit range's bit length plus fractionBits. The arm has applied misuse
+-- first.
 local function params128(integerBits: number, fractionBits: number, min: integer, max: integer): (U128, U128, number)
-	if integerBits < 1 or fractionBits < 0 or integerBits + fractionBits ~= 128 or integer.lt(max, min) then
-		error(RAISE_PARAMS, 2)
-	end
-	local c = capacity(integerBits, integer.lt(min, 0i))
-	if integer.lt(min, c[1]) or integer.lt(c[2], max) then
-		error(RAISE_BOUNDS, 2)
-	end
 	local rawMin = lshU(from64(min), fractionBits)
 	local rawMax = lshU(from64(max), fractionBits)
 	local rawRange = subU(rawMax, rawMin)
@@ -187,6 +203,10 @@ end
 -- SerializeFixed64). The wire is byte identical to SerializeInt64 over the raw
 -- bounds.
 local function writeFixed64(self: any, h: { value: integer }, integerBits: number, fractionBits: number, min: integer, max: integer): boolean
+	local bad = misuse(integerBits, fractionBits, min, max, false)
+	if bad ~= nil then
+		return self:_misuse(bad)
+	end
 	local rawMin, rawRange, numBits = params64(integerBits, fractionBits, min, max)
 	if self:_latched() then
 		return false
@@ -205,6 +225,10 @@ local function writeFixed64(self: any, h: { value: integer }, integerBits: numbe
 end
 
 local function readFixed64(self: any, h: { value: integer }, integerBits: number, fractionBits: number, min: integer, max: integer): boolean
+	local bad = misuse(integerBits, fractionBits, min, max, false)
+	if bad ~= nil then
+		return self:_misuse(bad)
+	end
 	local rawMin, rawRange, numBits = params64(integerBits, fractionBits, min, max)
 	if self:_latched() then
 		return false
@@ -224,6 +248,10 @@ local function readFixed64(self: any, h: { value: integer }, integerBits: number
 end
 
 local function measureFixed64(self: any, h: { value: integer }, integerBits: number, fractionBits: number, min: integer, max: integer): boolean
+	local bad = misuse(integerBits, fractionBits, min, max, false)
+	if bad ~= nil then
+		return self:_misuse(bad)
+	end
 	local rawMin, rawRange, numBits = params64(integerBits, fractionBits, min, max)
 	if self:_latched() then
 		return false
@@ -239,6 +267,10 @@ end
 -- pair, which must be within [min,max] whole units (STANDARD.md fixed; serialize.go
 -- SerializeFixed128). integerBits plus fractionBits must equal 128.
 local function writeFixed128(self: any, h: { value: U128 }, integerBits: number, fractionBits: number, min: integer, max: integer): boolean
+	local bad = misuse(integerBits, fractionBits, min, max, true)
+	if bad ~= nil then
+		return self:_misuse(bad)
+	end
 	local rawMin, rawRange, numBits = params128(integerBits, fractionBits, min, max)
 	if self:_latched() then
 		return false
@@ -262,6 +294,10 @@ local function writeFixed128(self: any, h: { value: U128 }, integerBits: number,
 end
 
 local function readFixed128(self: any, h: { value: U128 }, integerBits: number, fractionBits: number, min: integer, max: integer): boolean
+	local bad = misuse(integerBits, fractionBits, min, max, true)
+	if bad ~= nil then
+		return self:_misuse(bad)
+	end
 	local rawMin, rawRange, numBits = params128(integerBits, fractionBits, min, max)
 	if self:_latched() then
 		return false
@@ -289,6 +325,10 @@ local function readFixed128(self: any, h: { value: U128 }, integerBits: number, 
 end
 
 local function measureFixed128(self: any, h: { value: U128 }, integerBits: number, fractionBits: number, min: integer, max: integer): boolean
+	local bad = misuse(integerBits, fractionBits, min, max, true)
+	if bad ~= nil then
+		return self:_misuse(bad)
+	end
 	local rawMin, rawRange, numBits = params128(integerBits, fractionBits, min, max)
 	if self:_latched() then
 		return false

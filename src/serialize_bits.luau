@@ -8,7 +8,8 @@
 -- The writer is STRICT: it emits exactly serialize.go's bytes, and where
 -- serialize.go's WriteStream refuses (a full buffer) this port latches the
 -- same kind and writes nothing for that call; API misuse that serialize.go
--- panics on (bits outside its range) raises naming the same rule. Reads refuse
+-- panics on (bits outside its range) raises naming the same rule on write and
+-- measure, and refuses ValueOutOfRange on read (IMPLEMENTING.md U7). Reads refuse
 -- where serialize.go refuses; a refusal leaves the caller's destination
 -- untouched and the stream terminal (STANDARD.md, Reader Obligations).
 --
@@ -22,22 +23,48 @@
 local PAST_END = "past_end"
 
 -- Raise messages for API misuse: serialize.go's panic strings (serialize.go
--- v2.0.0 serialize.go; DESIGN.md (g)).
+-- v2.0.0 serialize.go; DESIGN.md (g)), and the value-width rule of
+-- IMPLEMENTING.md U8 (this port is always checked, so a value too wide for
+-- its bits is caught on write, never masked).
 local RAISE_BITS_RANGE = "serialize: bits must be in [1,32]"
 local RAISE_BITS_RANGE64 = "serialize: bits must be in [1,64]"
+local RAISE_VALUE_BITS = "serialize: serializeBits value must fit in bits (an integer in [0,2^bits))"
+local RAISE_VALUE_BITS64 = "serialize: serializeBits64 value must fit in bits"
+local RAISE_INTEGER_BITS64 = "serialize: serializeBits64 value must be an integer"
+local RAISE_INTEGER_UINT64 = "serialize: serializeUint64 value must be an integer"
+local RAISE_UINT8 = "serialize: serializeUint8 value must be an integer in [0,2^8)"
+local RAISE_UINT16 = "serialize: serializeUint16 value must be an integer in [0,2^16)"
+local RAISE_UINT32 = "serialize: serializeUint32 value must be an integer in [0,2^32)"
+
+-- POW2[n] is 2^n for n in [1,32], the exclusive top of an n-bit value.
+local POW2: { number } = {}
+for n = 1, 32 do
+	POW2[n] = 2 ^ n
+end
+
+-- fits is true when value is an integer number in [0, top) (U8).
+local function fits(value: any, top: number): boolean
+	return type(value) == "number" and value >= 0 and value < top and value // 1 == value
+end
 
 local M = {}
 
 -- ---------------------------------------------------------------------------
 -- The dispatched arms: serializeBits (DISPATCH, DESIGN.md (h)), the whole
--- operation in serialize.go's order — raise on misuse, refuse on a latched
+-- operation in serialize.go's order — misuse first, refuse on a latched
 -- stream, the bounds check of the whole width, then the bits (serialize.go
 -- write_stream.go SerializeBits / read_stream.go SerializeBits / measure_stream.go
--- SerializeBits).
+-- SerializeBits). The bit count is a declaration: an integer in its range, a
+-- fraction or a NaN included (IMPLEMENTING.md U16). Misuse raises on write and
+-- measure and refuses ValueOutOfRange on read (s:_misuse, U7).
 
 function M.writeBits(s: any, h: any, bits: number): boolean
-	if bits < 1 or bits > 32 then
-		error(RAISE_BITS_RANGE, 2)
+	if type(bits) ~= "number" or not (bits >= 1 and bits <= 32) or bits // 1 ~= bits then
+		return s:_misuse(RAISE_BITS_RANGE)
+	end
+	local value = h.value
+	if not fits(value, POW2[bits]) then
+		return s:_misuse(RAISE_VALUE_BITS)
 	end
 	if s:_latched() then
 		return false
@@ -45,14 +72,13 @@ function M.writeBits(s: any, h: any, bits: number): boolean
 	if s:_available() < bits then
 		return s:_fail(PAST_END)
 	end
-	local mask = (2 ^ bits) - 1
-	s:_writeBits(bit32.band(h.value, mask), bits)
+	s:_writeBits(value, bits)
 	return true
 end
 
 function M.readBits(s: any, h: any, bits: number): boolean
-	if bits < 1 or bits > 32 then
-		error(RAISE_BITS_RANGE, 2)
+	if type(bits) ~= "number" or not (bits >= 1 and bits <= 32) or bits // 1 ~= bits then
+		return s:_misuse(RAISE_BITS_RANGE)
 	end
 	if s:_latched() then
 		return false
@@ -65,18 +91,25 @@ function M.readBits(s: any, h: any, bits: number): boolean
 end
 
 function M.measureBits(s: any, h: any, bits: number): boolean
-	if bits < 1 or bits > 32 then
-		error(RAISE_BITS_RANGE, 2)
+	if type(bits) ~= "number" or not (bits >= 1 and bits <= 32) or bits // 1 ~= bits then
+		return s:_misuse(RAISE_BITS_RANGE)
 	end
 	return s:_measure(bits)
 end
 
 -- serializeBits64: the same, in [1,64]; past 32 bits the low 32 bits first,
 -- then the high bits - 32 (serialize.go write_stream.go SerializeBits64,
--- STANDARD.md bits).
+-- STANDARD.md bits). The value is an integer (DESIGN.md (c)).
 function M.writeBits64(s: any, h: any, bits: number): boolean
-	if bits < 1 or bits > 64 then
-		error(RAISE_BITS_RANGE64, 2)
+	if type(bits) ~= "number" or not (bits >= 1 and bits <= 64) or bits // 1 ~= bits then
+		return s:_misuse(RAISE_BITS_RANGE64)
+	end
+	local value = h.value
+	if typeof(value) ~= "integer" then
+		return s:_misuse(RAISE_INTEGER_BITS64)
+	end
+	if bits < 64 and integer.rshift(value, integer.create(bits)) ~= 0i then
+		return s:_misuse(RAISE_VALUE_BITS64)
 	end
 	if s:_latched() then
 		return false
@@ -84,13 +117,13 @@ function M.writeBits64(s: any, h: any, bits: number): boolean
 	if s:_available() < bits then
 		return s:_fail(PAST_END)
 	end
-	s:_writeBits64(h.value, bits)
+	s:_writeBits64(value, bits)
 	return true
 end
 
 function M.readBits64(s: any, h: any, bits: number): boolean
-	if bits < 1 or bits > 64 then
-		error(RAISE_BITS_RANGE64, 2)
+	if type(bits) ~= "number" or not (bits >= 1 and bits <= 64) or bits // 1 ~= bits then
+		return s:_misuse(RAISE_BITS_RANGE64)
 	end
 	if s:_latched() then
 		return false
@@ -103,18 +136,19 @@ function M.readBits64(s: any, h: any, bits: number): boolean
 end
 
 function M.measureBits64(s: any, h: any, bits: number): boolean
-	if bits < 1 or bits > 64 then
-		error(RAISE_BITS_RANGE64, 2)
+	if type(bits) ~= "number" or not (bits >= 1 and bits <= 64) or bits // 1 ~= bits then
+		return s:_misuse(RAISE_BITS_RANGE64)
 	end
 	return s:_measure(bits)
 end
 
 -- ---------------------------------------------------------------------------
 -- The fixed-width write arms (FIXED, DESIGN.md (h)): the write arm is the
--- family's, whole — refuse on a latched stream, the bounds check of the whole
--- width, then the bits. The read arms are reached only after the stream's read
--- gate has refused on a latched stream and on running past the end, so they
--- read exactly the width and assign the holder last.
+-- family's, whole — the value's width (U8), refuse on a latched stream, the
+-- bounds check of the whole width, then the bits. The read arms are reached
+-- only after the stream's read gate has refused on a latched stream and on
+-- running past the end, so they read exactly the width and assign the holder
+-- last.
 
 function M.writeBool(s: any, h: any): boolean
 	if s:_latched() then
@@ -133,6 +167,9 @@ function M.readBool(s: any, h: any): boolean
 end
 
 function M.writeUint8(s: any, h: any): boolean
+	if not fits(h.value, 256) then
+		return s:_misuse(RAISE_UINT8)
+	end
 	if s:_latched() then
 		return false
 	end
@@ -149,6 +186,9 @@ function M.readUint8(s: any, h: any): boolean
 end
 
 function M.writeUint16(s: any, h: any): boolean
+	if not fits(h.value, 65536) then
+		return s:_misuse(RAISE_UINT16)
+	end
 	if s:_latched() then
 		return false
 	end
@@ -165,6 +205,9 @@ function M.readUint16(s: any, h: any): boolean
 end
 
 function M.writeUint32(s: any, h: any): boolean
+	if not fits(h.value, 4294967296) then
+		return s:_misuse(RAISE_UINT32)
+	end
 	if s:_latched() then
 		return false
 	end
@@ -180,7 +223,12 @@ function M.readUint32(s: any, h: any): boolean
 	return true
 end
 
+-- writeUint64 takes the bit pattern as an integer (DESIGN.md (c)); a number
+-- raises serialize's own text, never the integer library's (audit 2026-10-27).
 function M.writeUint64(s: any, h: any): boolean
+	if typeof(h.value) ~= "integer" then
+		return s:_misuse(RAISE_INTEGER_UINT64)
+	end
 	if s:_latched() then
 		return false
 	end

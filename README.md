@@ -17,6 +17,8 @@ if not r:serializeObject(message) or not r:serializeEnd() then
 end
 ```
 
+Standard 2.1's uniform rules (IMPLEMENTING.md U1 to U16) are kept and proved in test/uniform: a read never raises (caller misuse on read refuses `value_out_of_range`), `serialize.refusalName`, `stream:fail(reason)` and `serialize.copyString` are public, and a writer's buffer is unspecified until `flush()`.
+
 DESIGN.md is the design: the API, the refusal reasons, the bit order, the number model, the file layout and the runner.
 
     make dist-luau      # fetch the pinned Luau 0.741 (sha256 checked) into dist/

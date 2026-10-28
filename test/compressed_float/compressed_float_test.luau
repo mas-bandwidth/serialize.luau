@@ -291,11 +291,15 @@ local function testValidation()
 		w:serializeCompressedFloatPrecomputed({ value = 5 }, 0, 10, 10.0, 0)
 	end, "precomputed compressed float constants must be exactly what CompressedFloatParams derives")
 
-	-- the same precomputed validation on the read and measure streams.
-	raises(function()
+	-- the same precomputed validation on the read and measure streams; a read
+	-- never raises, it refuses value_out_of_range (IMPLEMENTING.md U7, U16).
+	do
 		local r = ReadStream.new(buffer.create(8))
-		r:serializeCompressedFloatPrecomputed({ value = 5 }, 1000, 9, 10.0, 0)
-	end, "precomputed compressed float constants must be exactly what CompressedFloatParams derives")
+		local h = { value = 5 }
+		if r:serializeCompressedFloatPrecomputed(h, 1000, 9, 10.0, 0) ~= false or r:error() ~= "value_out_of_range" or h.value ~= 5 or r:bitsProcessed() ~= 0 then
+			error("a bad precomputed declaration on read was not refused as value_out_of_range", 2)
+		end
+	end
 
 	raises(function()
 		local m = serialize.MeasureStream.new()
@@ -424,8 +428,12 @@ local function testFloat32Narrowing()
 		error("a precomputed delta was not narrowed to float32", 2)
 	end
 	raises(function()
-		ReadStream.new(buffer.create(8)):serializeCompressedFloatPrecomputed({ value = 0 }, maxIntegerValue, bits, 1e39, 0)
+		WriteStream.new(buffer.create(8)):serializeCompressedFloatPrecomputed({ value = 0 }, maxIntegerValue, bits, 1e39, 0)
 	end, "precomputed compressed float constants must be exactly what CompressedFloatParams derives")
+	local refused = ReadStream.new(buffer.create(8))
+	if refused:serializeCompressedFloatPrecomputed({ value = 0 }, maxIntegerValue, bits, 1e39, 0) ~= false or refused:error() ~= "value_out_of_range" then
+		error("a delta that narrows to infinity was not refused on read", 2)
+	end
 	raises(function()
 		WriteStream.new(buffer.create(8)):serializeCompressedFloat({ value = 1e39 }, 0, 10, 0.01)
 	end, "compressed float value must be finite")

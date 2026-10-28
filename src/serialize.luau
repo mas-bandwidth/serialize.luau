@@ -43,6 +43,17 @@ S.MeasureStream = Stream.MeasureStream
 S.Continue = Stream.Continue
 S.Until = Stream.Until
 
+-- refusalName(reason) is the refusal-name function (IMPLEMENTING.md U14): the
+-- reason's name, "none" for nil.
+S.refusalName = Stream.refusalName
+
+-- copyString(source, destSize) is serialize_copy_string (IMPLEMENTING.md
+-- U15): at most destSize - 1 bytes of source, stopping at a NUL, cut back to
+-- a UTF-8 character boundary.
+function S.copyString(source: string, destSize: number): string
+	return family("bytes").copyString(source, destSize)
+end
+
 -- serialize_bitpacker.luau
 S.BitWriter = lazyClass("bitpacker", "BitWriter")
 S.BitReader = lazyClass("bitpacker", "BitReader")

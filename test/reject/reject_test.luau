@@ -90,11 +90,12 @@ function T.TestReject()
 	end }) == false, "the object refuses")
 	terminal(r, reasons.PastEnd, "object keeps past_end")
 
-	-- an object that gives its own error value still latches that value
+	-- an object that gives its own error value outside the closed list latches
+	-- rejected (IMPLEMENTING.md U14: a refused stream reports a reason of the list)
 	r = serialize.ReadStream.new(bytes({ 0x05 }))
 	check(r:serializeObject({ serialize = function(_, _s): (boolean, string)
 		return false, "mine"
-	end }) == false and r:error() == "mine", "an object's own error value is latched")
+	end }) == false and r:error() == reasons.Rejected, "an object's own error value latched " .. tostring(r:error()))
 
 	-- the negative case: accepted fields and no refusal are accepted
 	r = serialize.ReadStream.new(bytes({ 0x1A }))

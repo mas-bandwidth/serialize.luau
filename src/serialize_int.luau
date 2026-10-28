@@ -59,10 +59,10 @@ end
 -- and offset value - min in uint32.
 function writeInt(s: any, holder: any, min: number, max: number): boolean
 	if not isInt32(min) or not isInt32(max) or not isInt32(holder.value) then
-		error(RAISE_INT32, 2)
+		return s:_misuse(RAISE_INT32)
 	end
 	if min > max then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
@@ -86,10 +86,10 @@ end
 
 function readInt(s: any, holder: any, min: number, max: number): boolean
 	if not isInt32(min) or not isInt32(max) then
-		error(RAISE_INT32, 2)
+		return s:_misuse(RAISE_INT32)
 	end
 	if min > max then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
@@ -114,10 +114,10 @@ end
 
 function measureInt(s: any, holder: any, min: number, max: number): boolean
 	if not isInt32(min) or not isInt32(max) or not isInt32(holder.value) then
-		error(RAISE_INT32, 2)
+		return s:_misuse(RAISE_INT32)
 	end
 	if min > max then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
@@ -132,10 +132,10 @@ end
 -- written as one group when bits <= 32 and otherwise low 32 bits then high.
 function writeInt64(s: any, holder: any, min: integer, max: integer): boolean
 	if not isInteger(min) or not isInteger(max) or not isInteger(holder.value) then
-		error(RAISE_INT64, 2)
+		return s:_misuse(RAISE_INT64)
 	end
 	if integer.gt(min, max) then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
@@ -159,10 +159,10 @@ end
 
 function readInt64(s: any, holder: any, min: integer, max: integer): boolean
 	if not isInteger(min) or not isInteger(max) then
-		error(RAISE_INT64, 2)
+		return s:_misuse(RAISE_INT64)
 	end
 	if integer.gt(min, max) then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
@@ -185,10 +185,10 @@ end
 
 function measureInt64(s: any, holder: any, min: integer, max: integer): boolean
 	if not isInteger(min) or not isInteger(max) or not isInteger(holder.value) then
-		error(RAISE_INT64, 2)
+		return s:_misuse(RAISE_INT64)
 	end
 	if integer.gt(min, max) then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
