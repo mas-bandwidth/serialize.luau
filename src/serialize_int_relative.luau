@@ -51,29 +51,29 @@ local BUCKETS = {
 }
 
 -- an int32 holds only integers, so a non-integer number is not a value the
--- parameter TYPE could hold; raise before the latch, as Go's panic does.
-local function requireInteger(value: any, message: string)
-	if type(value) ~= "number" or value ~= value or value % 1 ~= 0 then
-		error(message, 3)
-	end
+-- parameter TYPE could hold (DESIGN.md (a)).
+local function isInteger(value: any): boolean
+	return type(value) == "number" and value == value and value % 1 == 0
 end
 
--- orderTable checks the holder shape, the Luau form of Go's non-nil *int32.
-local function requireHolder(holder: any)
-	if type(holder) ~= "table" then
-		error(RAISE_HOLDER_TYPE, 3)
+-- declarationMisuse applies the panicIntRelativeDomain rule and the holder
+-- shape (the Luau form of Go's non-nil *int32): previous is the caller's own
+-- state, never packet data, so a previous outside the domain is caller misuse
+-- on every stream, checked before the latch (serialize.go read/write/measure
+-- SerializeIntRelative; DESIGN.md (g)). It returns the rule broken, or nil; the
+-- arm raises it on write and measure and refuses ValueOutOfRange on read
+-- (IMPLEMENTING.md U7, U16).
+local function declarationMisuse(previous: any, holder: any): string?
+	if not isInteger(previous) then
+		return RAISE_PREVIOUS_TYPE
 	end
-end
-
--- checkPrevious applies the panicIntRelativeDomain rule: previous is the
--- caller's own state, never packet data, so it is API misuse on every stream
--- and is raised before the latch (serialize.go read/write/measure
--- SerializeIntRelative; DESIGN.md (g)).
-local function checkPrevious(previous: any)
-	requireInteger(previous, RAISE_PREVIOUS_TYPE)
 	if previous < INT_RELATIVE_MIN or previous > INT_RELATIVE_MAX then
-		error(RAISE_DOMAIN, 3)
+		return RAISE_DOMAIN
 	end
+	if type(holder) ~= "table" then
+		return RAISE_HOLDER_TYPE
+	end
+	return nil
 end
 
 -- writeWidth is the number of bits the writer emits: the flag ladder plus
@@ -123,13 +123,17 @@ local M = {}
 -- current outside the domain latch ValueOutOfRange; a full buffer latches
 -- PastEnd before any bit moves (DESIGN.md (g)).
 function M.writeIntRelative(s: any, previous: number, holder: any): boolean
-	checkPrevious(previous)
-	requireHolder(holder)
+	local bad = declarationMisuse(previous, holder)
+	if bad ~= nil then
+		return s:_misuse(bad)
+	end
 	if s:_latched() then
 		return false
 	end
 	local current = holder.value
-	requireInteger(current, RAISE_CURRENT_TYPE)
+	if not isInteger(current) then
+		return s:_misuse(RAISE_CURRENT_TYPE)
+	end
 	if previous >= current then
 		return s:_fail(VALUE_OUT_OF_RANGE)
 	end
@@ -165,8 +169,10 @@ end
 -- read_stream.go SerializeIntRelative). A refusal latches and leaves the
 -- holder unwritten.
 function M.readIntRelative(s: any, previous: number, holder: any): boolean
-	checkPrevious(previous)
-	requireHolder(holder)
+	local bad = declarationMisuse(previous, holder)
+	if bad ~= nil then
+		return s:_misuse(bad)
+	end
 	if s:_latched() then
 		return false
 	end
@@ -215,13 +221,17 @@ end
 -- refuses the same caller errors (serialize.go measure_stream.go
 -- SerializeIntRelative; DESIGN.md (h)).
 function M.measureIntRelative(s: any, previous: number, holder: any): boolean
-	checkPrevious(previous)
-	requireHolder(holder)
+	local bad = declarationMisuse(previous, holder)
+	if bad ~= nil then
+		return s:_misuse(bad)
+	end
 	if s:_latched() then
 		return false
 	end
 	local current = holder.value
-	requireInteger(current, RAISE_CURRENT_TYPE)
+	if not isInteger(current) then
+		return s:_misuse(RAISE_CURRENT_TYPE)
+	end
 	if previous >= current then
 		return s:_fail(VALUE_OUT_OF_RANGE)
 	end

@@ -46,15 +46,18 @@ local function bitsRequired(min: number, max: number): number
 	return bits
 end
 
--- validateBufferSize enforces serialize.go's panicBufferSize: bufferSize is
--- in [1, 1<<31) and an integer (STANDARD.md string; DESIGN.md (a)).
-local function validateBufferSize(bufferSize: any)
+-- bufferSizeMisuse applies serialize.go's panicBufferSize: bufferSize is in
+-- [1, 1<<31) and an integer (STANDARD.md string; DESIGN.md (a)). It returns
+-- the rule broken, or nil; the arm raises it on write and measure and refuses
+-- ValueOutOfRange on read (IMPLEMENTING.md U7, U16).
+local function bufferSizeMisuse(bufferSize: any): string?
 	if type(bufferSize) ~= "number" or bufferSize % 1 ~= 0 then
-		error("serialize: string buffer size must be an integer", 3)
+		return "serialize: string buffer size must be an integer"
 	end
 	if bufferSize < 1 or bufferSize > 0x7fffffff then
-		error("serialize: string buffer size must be in [1,1<<31)", 3)
+		return "serialize: string buffer size must be in [1,1<<31)"
 	end
+	return nil
 end
 
 -- writeBitsRaw writes bits in [1,32] at the stream's bit index (the buffer's
@@ -184,12 +187,44 @@ local function textRefusal(value: string): string?
 	return nil
 end
 
+-- copyString is serialize_copy_string (IMPLEMENTING.md U15; the reference's
+-- serialize_copy_string): the bytes of source before its first NUL, at most
+-- destSize - 1 of them, so the copy fits a string field of buffer size
+-- destSize. A Luau string is a value, so the copy is returned. A cut never
+-- splits a UTF-8 character: it backs off over continuation bytes, so a
+-- well-formed source gives a well-formed copy. destSize is caller's
+-- declaration and raises unless it is an integer of at least 1.
+function M.copyString(source: string, destSize: number): string
+	if type(source) ~= "string" then
+		error("serialize: copyString source must be a string", 3)
+	end
+	if type(destSize) ~= "number" or destSize % 1 ~= 0 or destSize < 1 then
+		error("serialize: copyString destination size must be an integer >= 1", 3)
+	end
+	local n = #source
+	local nul = string.find(source, "\0", 1, true)
+	if nul ~= nil then
+		n = nul - 1
+	end
+	if n > destSize - 1 then
+		n = destSize - 1
+		while n > 0 do
+			local nextByte = string.byte(source, n + 1) :: number
+			if nextByte < 0x80 or nextByte > 0xBF then
+				break
+			end
+			n -= 1
+		end
+	end
+	return string.sub(source, 1, n)
+end
+
 -- ---------------------------------------------------------------------------
 -- bytes (STANDARD.md bytes; DESIGN.md (g): aligns first, count not written).
 
 function M.writeBytes(s: any, data: any): boolean
 	if type(data) ~= "buffer" then
-		error("serialize: serializeBytes data must be a buffer", 2)
+		return s:_misuse("serialize: serializeBytes data must be a buffer")
 	end
 	if s:_latched() then
 		return false
@@ -213,7 +248,7 @@ end
 
 function M.readBytes(s: any, data: any): boolean
 	if type(data) ~= "buffer" then
-		error("serialize: serializeBytes data must be a buffer", 2)
+		return s:_misuse("serialize: serializeBytes data must be a buffer")
 	end
 	if s:_latched() then
 		return false
@@ -238,7 +273,7 @@ end
 
 function M.measureBytes(s: any, data: any): boolean
 	if type(data) ~= "buffer" then
-		error("serialize: serializeBytes data must be a buffer", 2)
+		return s:_misuse("serialize: serializeBytes data must be a buffer")
 	end
 	if s:_latched() then
 		return false
@@ -257,11 +292,14 @@ end
 
 function M.writeString(s: any, holder: any, bufferSize: any): boolean
 	if type(holder) ~= "table" then
-		error("serialize: serializeString holder must be a table", 2)
+		return s:_misuse("serialize: serializeString holder must be a table")
 	end
-	validateBufferSize(bufferSize)
+	local badSize = bufferSizeMisuse(bufferSize)
+	if badSize ~= nil then
+		return s:_misuse(badSize)
+	end
 	if type(holder.value) ~= "string" then
-		error("serialize: serializeString value must be a string", 2)
+		return s:_misuse("serialize: serializeString value must be a string")
 	end
 	if s:_latched() then
 		return false
@@ -296,9 +334,12 @@ end
 
 function M.readString(s: any, holder: any, bufferSize: any): boolean
 	if type(holder) ~= "table" then
-		error("serialize: serializeString holder must be a table", 2)
+		return s:_misuse("serialize: serializeString holder must be a table")
 	end
-	validateBufferSize(bufferSize)
+	local badSize = bufferSizeMisuse(bufferSize)
+	if badSize ~= nil then
+		return s:_misuse(badSize)
+	end
 	if s:_latched() then
 		return false
 	end
@@ -335,11 +376,14 @@ end
 
 function M.measureString(s: any, holder: any, bufferSize: any): boolean
 	if type(holder) ~= "table" then
-		error("serialize: serializeString holder must be a table", 2)
+		return s:_misuse("serialize: serializeString holder must be a table")
 	end
-	validateBufferSize(bufferSize)
+	local badSize = bufferSizeMisuse(bufferSize)
+	if badSize ~= nil then
+		return s:_misuse(badSize)
+	end
 	if type(holder.value) ~= "string" then
-		error("serialize: serializeString value must be a string", 2)
+		return s:_misuse("serialize: serializeString value must be a string")
 	end
 	if s:_latched() then
 		return false
@@ -347,6 +391,12 @@ function M.measureString(s: any, holder: any, bufferSize: any): boolean
 	local length = #holder.value
 	if length >= bufferSize then
 		return s:_fail(ValueOutOfRange)
+	end
+	-- the measure refuses the text the writer refuses, for the writer's
+	-- reason (IMPLEMENTING.md U3, U6)
+	local refusal = textRefusal(holder.value)
+	if refusal ~= nil then
+		return s:_fail(refusal)
 	end
 	if not s:_measure(bitsRequired(0, bufferSize - 1)) then
 		return false

@@ -74,13 +74,35 @@ function M.compressedFloatParams(min: number, max: number, resolution: number): 
 	return maxIntegerValue, bits, delta
 end
 
--- validateCompressedFloatConstants raises unless the precomputed constants are
--- exactly what CompressedFloatParams derives (serialize.go stream.go
--- validateCompressedFloatConstants; DESIGN.md (g)).
-local function validateCompressedFloatConstants(maxIntegerValue: number, bits: number, delta: number)
-	if maxIntegerValue == 0 or bits ~= bitsRequired(0, maxIntegerValue) or not (delta > 0) or delta - delta ~= 0 then
-		error(RAISE_PRECOMPUTED, 2)
+-- paramsMisuse is the rule a (min,max,resolution) declaration breaks, or nil:
+-- numbers, with min < max and resolution > 0 once narrowed to float32
+-- (serialize.go CompressedFloatParams' panic; IMPLEMENTING.md U16).
+local function paramsMisuse(min: any, max: any, resolution: any): string?
+	if type(min) ~= "number" or type(max) ~= "number" or type(resolution) ~= "number" then
+		return RAISE_FLOAT_PARAMS
 	end
+	if not (fround(min) < fround(max)) or not (fround(resolution) > 0) then
+		return RAISE_FLOAT_PARAMS
+	end
+	return nil
+end
+
+-- constantsValid is true when the precomputed constants are what can be
+-- checked without the declaration they came from (serialize.go stream.go
+-- validateCompressedFloatConstants; IMPLEMENTING.md U16): max_integer_value an
+-- integer in [1, 4294967040], the top of CompressedFloatParams' clamp (so
+-- bitsRequired never sees a value past 32 bits and cannot wrap at 2^32),
+-- bits exactly bitsRequired(0, max_integer_value), delta positive and finite,
+-- and min a number. The arm raises on write and measure and refuses
+-- ValueOutOfRange on read (U7).
+local function constantsValid(maxIntegerValue: any, bits: any, delta: any, min: any): boolean
+	if type(maxIntegerValue) ~= "number" or type(bits) ~= "number" or type(delta) ~= "number" or type(min) ~= "number" then
+		return false
+	end
+	if not (maxIntegerValue >= 1 and maxIntegerValue <= VALUES_CLAMP_HIGH) or maxIntegerValue // 1 ~= maxIntegerValue then
+		return false
+	end
+	return bits == bitsRequired(0, maxIntegerValue) and delta > 0 and delta - delta == 0
 end
 
 -- writeCommon is the one audited home of the write-side quantization arithmetic
@@ -141,55 +163,73 @@ local function readCommon(s: any, h: any, maxIntegerValue: number, bits: number,
 	return true
 end
 
--- The dispatched write arms. A value that is not finite as a float32 (NaN, an
--- infinity, or a finite double past FLT_MAX, which narrows to one) raises
--- before the latch check and before any arithmetic (STANDARD.md
--- compressed_float; DESIGN.md (e)). The precomputed arms narrow delta to
--- float32 on entry, as Go's float32 parameter is, before it is validated.
+-- The dispatched arms. The declaration is checked first, on every stream
+-- (IMPLEMENTING.md U16): it raises on write and measure and refuses
+-- ValueOutOfRange on read (s:_misuse, U7), before any bit moves. On write, a
+-- value that is not finite as a float32 (NaN, an infinity, or a finite double
+-- past FLT_MAX, which narrows to one) then raises before the latch check and
+-- before any arithmetic (STANDARD.md compressed_float; DESIGN.md (e)). The
+-- precomputed arms narrow delta to float32, as Go's float32 parameter is,
+-- before it is validated.
 function M.writeCompressedFloat(s: any, h: any, min: number, max: number, resolution: number): boolean
+	local bad = paramsMisuse(min, max, resolution)
+	if bad ~= nil then
+		return s:_misuse(bad)
+	end
 	local value = h.value
 	if type(value) ~= "number" then
-		error(RAISE_VALUE, 2)
+		return s:_misuse(RAISE_VALUE)
 	end
 	if not isFinite(fround(value)) then
-		error(RAISE_NONFINITE, 2)
+		return s:_misuse(RAISE_NONFINITE)
 	end
 	local maxIntegerValue, bits, delta = M.compressedFloatParams(min, max, resolution)
 	return writeCommon(s, h, maxIntegerValue, bits, delta, fround(min))
 end
 
 function M.writeCompressedFloatPrecomputed(s: any, h: any, maxIntegerValue: number, bits: number, delta: number, min: number): boolean
+	if not constantsValid(maxIntegerValue, bits, delta, min) or not constantsValid(maxIntegerValue, bits, fround(delta), min) then
+		return s:_misuse(RAISE_PRECOMPUTED)
+	end
 	local value = h.value
 	if type(value) ~= "number" then
-		error(RAISE_VALUE_PRECOMPUTED, 2)
+		return s:_misuse(RAISE_VALUE_PRECOMPUTED)
 	end
 	if not isFinite(fround(value)) then
-		error(RAISE_NONFINITE, 2)
+		return s:_misuse(RAISE_NONFINITE)
 	end
-	delta = fround(delta)
-	validateCompressedFloatConstants(maxIntegerValue, bits, delta)
-	return writeCommon(s, h, maxIntegerValue, bits, delta, fround(min))
+	return writeCommon(s, h, maxIntegerValue, bits, fround(delta), fround(min))
 end
 
 function M.readCompressedFloat(s: any, h: any, min: number, max: number, resolution: number): boolean
+	local bad = paramsMisuse(min, max, resolution)
+	if bad ~= nil then
+		return s:_misuse(bad)
+	end
 	local maxIntegerValue, bits, delta = M.compressedFloatParams(min, max, resolution)
 	return readCommon(s, h, maxIntegerValue, bits, delta, fround(min))
 end
 
 function M.readCompressedFloatPrecomputed(s: any, h: any, maxIntegerValue: number, bits: number, delta: number, min: number): boolean
-	delta = fround(delta)
-	validateCompressedFloatConstants(maxIntegerValue, bits, delta)
-	return readCommon(s, h, maxIntegerValue, bits, delta, fround(min))
+	if not constantsValid(maxIntegerValue, bits, delta, min) or not constantsValid(maxIntegerValue, bits, fround(delta), min) then
+		return s:_misuse(RAISE_PRECOMPUTED)
+	end
+	return readCommon(s, h, maxIntegerValue, bits, fround(delta), fround(min))
 end
 
 function M.measureCompressedFloat(s: any, h: any, min: number, max: number, resolution: number): boolean
+	local bad = paramsMisuse(min, max, resolution)
+	if bad ~= nil then
+		return s:_misuse(bad)
+	end
 	local _, bits, _ = M.compressedFloatParams(min, max, resolution)
 	return s:_measure(bits)
 end
 
 function M.measureCompressedFloatPrecomputed(s: any, h: any, maxIntegerValue: number, bits: number, delta: number, min: number): boolean
-	delta = fround(delta)
-	validateCompressedFloatConstants(maxIntegerValue, bits, delta)
+	if not constantsValid(maxIntegerValue, bits, delta, min) or not constantsValid(maxIntegerValue, bits, fround(delta), min) then
+		return s:_misuse(RAISE_PRECOMPUTED)
+	end
 	return s:_measure(bits)
 end
 

@@ -71,7 +71,8 @@ function T.TestSerializeEnd()
 	check(r:serializeInt({ value = 0 }, 0, 4) == false, "an out-of-range int refuses")
 	check(r:serializeEnd() == false and r:error() == reasons.ValueOutOfRange, "the end keeps the first reason")
 
-	-- a writer's end emits nothing; a measure's costs nothing; both refuse when latched
+	-- a writer's end emits nothing; a measure's costs nothing; on either it is a
+	-- no-op returning true, latched or not (IMPLEMENTING.md U12)
 	local w = serialize.WriteStream.new(buffer.create(8))
 	check(w:serializeBits({ value = 5 }, 3) and w:serializeEnd(), "a writer ends")
 	check(w:bitsProcessed() == 3, "a writer's end wrote bits")
@@ -81,7 +82,7 @@ function T.TestSerializeEnd()
 	check(m:serializeEnd() and m:bitsProcessed() == 0, "a measure's end cost bits")
 	local full = serialize.WriteStream.new(buffer.create(8))
 	check(full:serializeUint64({ value = 0i }) and full:serializeBool({ value = true }) == false, "a full writer refuses")
-	check(full:serializeEnd() == false, "a latched writer's end refuses")
+	check(full:serializeEnd() == true and full:error() == serialize.SerializeError.PastEnd, "a latched writer's end is not a no-op returning true")
 end
 
 return T

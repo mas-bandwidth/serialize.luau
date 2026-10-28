@@ -260,10 +260,10 @@ end
 -- computed in the unsigned domain, low half first, then the high remainder.
 function writeInt128(s: any, holder: any, min: any, max: any): boolean
 	if not isPair(min) or not isPair(max) or not isPair(holder.value) then
-		error(RAISE_INT128, 2)
+		return s:_misuse(RAISE_INT128)
 	end
 	if cmpSigned(min, max) > 0 then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
@@ -287,10 +287,10 @@ end
 
 function readInt128(s: any, holder: any, min: any, max: any): boolean
 	if not isPair(min) or not isPair(max) then
-		error(RAISE_INT128, 2)
+		return s:_misuse(RAISE_INT128)
 	end
 	if cmpSigned(min, max) > 0 then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
@@ -313,10 +313,10 @@ end
 
 function measureInt128(s: any, holder: any, min: any, max: any): boolean
 	if not isPair(min) or not isPair(max) or not isPair(holder.value) then
-		error(RAISE_INT128, 2)
+		return s:_misuse(RAISE_INT128)
 	end
 	if cmpSigned(min, max) > 0 then
-		error(RAISE_MINMAX, 2)
+		return s:_misuse(RAISE_MINMAX)
 	end
 	if s:_latched() then
 		return false
@@ -331,7 +331,7 @@ end
 -- SerializeUint128): all 128 bits, low half first, no range.
 function writeUint128(s: any, holder: any): boolean
 	if not isPair(holder.value) then
-		error(RAISE_INT128, 2)
+		return s:_misuse(RAISE_INT128)
 	end
 	if s:_latched() then
 		return false
@@ -344,10 +344,9 @@ function writeUint128(s: any, holder: any): boolean
 	return true
 end
 
+-- readUint128 assigns its holder whatever it held before, an empty {}
+-- included: a read's holder value is an output (audit 2026-10-27).
 function readUint128(s: any, holder: any): boolean
-	if not isPair(holder.value) then
-		error(RAISE_INT128, 2)
-	end
 	if s:_latched() then
 		return false
 	end
@@ -362,7 +361,7 @@ end
 
 function measureUint128(s: any, holder: any): boolean
 	if not isPair(holder.value) then
-		error(RAISE_INT128, 2)
+		return s:_misuse(RAISE_INT128)
 	end
 	if s:_latched() then
 		return false

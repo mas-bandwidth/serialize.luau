@@ -45,6 +45,25 @@ local SerializeError = table.freeze({
 	Rejected = "rejected",
 })
 
+-- REASONS is the closed list as a set: a value outside it is never latched
+-- as given (IMPLEMENTING.md U14).
+local REASONS: { [any]: boolean } = {}
+for _, reason in SerializeError :: any do
+	REASONS[reason] = true
+end
+
+-- refusalName is the refusal-name function (IMPLEMENTING.md U14): the reason's
+-- name with the family spellings, "none" for no refusal.
+local function refusalName(reason: any): string
+	if reason == nil then
+		return "none"
+	end
+	if REASONS[reason] then
+		return reason
+	end
+	return "unknown"
+end
+
 -- Raise messages for API misuse: serialize.go panics, raised naming the rule
 -- (DESIGN.md (g)). Family modules raise their own with the same prefix.
 local RAISE_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple of 8 bytes"
@@ -140,6 +159,18 @@ function Shared._fail(self: any, kind: any): boolean
 	return false
 end
 
+-- _misuse is caller misuse found by an arm (a bad declaration, a holder or
+-- parameter of the wrong type). A read never traps (IMPLEMENTING.md U7, U16):
+-- it refuses ValueOutOfRange through the one latch, so a stream that already
+-- failed keeps its first reason. A write or a measure raises, naming the rule,
+-- this port's write-misuse mechanism (DESIGN.md (a)).
+function Shared._misuse(self: any, message: string): boolean
+	if self._kind == "read" then
+		return self:_fail(SerializeError.ValueOutOfRange)
+	end
+	error(message, 3)
+end
+
 function Shared._latched(self: any): boolean
 	return self._error ~= nil
 end
@@ -169,13 +200,18 @@ Shared.alignBits = Shared._alignBits
 function Shared.serializeObject(self: any, object: any): boolean
 	local method: any = if type(object) == "table" then object.serialize else nil
 	if type(method) ~= "function" then
-		error(RAISE_NOT_AN_OBJECT, 2)
+		return self:_misuse(RAISE_NOT_AN_OBJECT)
 	end
 	if self._error ~= nil then
 		return false
 	end
 	local ok, err = (method :: any)(object, self)
 	if not ok then
+		-- an error value outside the closed list is the caller refusing
+		-- without a reason of the list: rejected (IMPLEMENTING.md U14)
+		if not REASONS[err] then
+			err = nil
+		end
 		return self:_fail(if err ~= nil then err else SerializeError.Rejected)
 	end
 	return self._error == nil
@@ -186,7 +222,8 @@ end
 -- the arm suffix: the WriteStream method calls family.write<Suffix>(stream,
 -- ...), the ReadStream method family.read<Suffix>(stream, ...) and the
 -- MeasureStream method family.measure<Suffix>(stream, ...). Each arm does
--- the whole operation in serialize.go's order: raise on API misuse, refuse
+-- the whole operation in serialize.go's order: API misuse first (s:_misuse,
+-- a raise on write and measure, a ValueOutOfRange refusal on read), refuse
 -- on a latched stream, then the refusals and the bits.
 local DISPATCH: { { string } } = {
 	{ "serializeBits", "bits", "Bits" },
@@ -333,8 +370,15 @@ end
 -- serializeEnd writes the end of the object, which is nothing at all
 -- (STANDARD.md end): the writer leaves the final byte's unused bits zero.
 -- A latched stream refuses.
-function WriteStream.serializeEnd(self: any): boolean
-	return self._error == nil
+function WriteStream.serializeEnd(_self: any): boolean
+	return true
+end
+
+-- fail is the public fail(reason) (IMPLEMENTING.md U14). On a write there is
+-- nothing to refuse: it returns false, records nothing and never raises
+-- (IMPLEMENTING.md U9).
+function WriteStream.fail(_self: any, _reason: any): boolean
+	return false
 end
 
 -- reject is read only (IMPLEMENTING.md U2): on a write there is nothing to
@@ -490,6 +534,13 @@ function ReadStream.reject(self: any): boolean
 	return self:_fail(SerializeError.Rejected)
 end
 
+-- fail is the public fail(reason) (IMPLEMENTING.md U14): it latches reason
+-- through the one latch and returns false. No reason, or a value outside the
+-- closed list, records rejected: never an assertion and never none.
+function ReadStream.fail(self: any, reason: any): boolean
+	return self:_fail(if REASONS[reason] then reason else SerializeError.Rejected)
+end
+
 -- ---------------------------------------------------------------------------
 -- MeasureStream (serialize.go MeasureStream): counts the bits a write would
 -- take, writing nothing. Every align counts as the worst case 7 bits.
@@ -539,9 +590,16 @@ function MeasureStream.reject(_self: any): boolean
 	error(RAISE_REJECT_NOT_READ, 2)
 end
 
--- serializeEnd costs nothing (STANDARD.md end).
-function MeasureStream.serializeEnd(self: any): boolean
-	return self:_measure(0)
+-- serializeEnd costs nothing (STANDARD.md end): a no-op returning true
+-- (IMPLEMENTING.md U12).
+function MeasureStream.serializeEnd(_self: any): boolean
+	return true
+end
+
+-- fail is the public fail(reason) (IMPLEMENTING.md U14): a measure refuses
+-- nothing (U6), so it returns false, records nothing and never raises (U9).
+function MeasureStream.fail(_self: any, _reason: any): boolean
+	return false
 end
 
 -- ---------------------------------------------------------------------------
@@ -569,5 +627,6 @@ return table.freeze({
 	MeasureStream = table.freeze(MeasureStream),
 	Continue = Continue,
 	Until = Until,
+	refusalName = refusalName,
 	family = family,
 })

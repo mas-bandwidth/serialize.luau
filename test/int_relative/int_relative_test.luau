@@ -226,14 +226,17 @@ local function validation()
 		end
 	end
 
-	-- a previous outside the domain is API misuse on every stream, raised with
-	-- serialize.go's panicIntRelativeDomain text
+	-- a previous outside the domain is API misuse on every stream: raised with
+	-- serialize.go's panicIntRelativeDomain text on write and measure, and
+	-- refused as value_out_of_range on read, never raised (IMPLEMENTING.md U7)
+	for _, previous in { -1, 2147483648 } do
+		local r = serialize.ReadStream.new(buffer.create(8))
+		local h = { value = 5 }
+		check(r:serializeIntRelative(previous, h) == false and r:error() == serialize.SerializeError.ValueOutOfRange, "a read with previous " .. previous .. " is refused as value out of range")
+		check(h.value == 5 and r:bitsProcessed() == 0, "a refused previous moves nothing")
+	end
 	do
 		local cases = {
-			function()
-				local r = serialize.ReadStream.new(buffer.create(8))
-				r:serializeIntRelative(-1, { value = 5 })
-			end,
 			function()
 				local w = serialize.WriteStream.new(buffer.create(8))
 				w:serializeIntRelative(-1, { value = 5 })
@@ -243,8 +246,8 @@ local function validation()
 				m:serializeIntRelative(-1, { value = 5 })
 			end,
 			function()
-				local r = serialize.ReadStream.new(buffer.create(8))
-				r:serializeIntRelative(2147483648, { value = 5 })
+				local w = serialize.WriteStream.new(buffer.create(8))
+				w:serializeIntRelative(2147483648, { value = 5 })
 			end,
 		}
 		for _, f in cases do

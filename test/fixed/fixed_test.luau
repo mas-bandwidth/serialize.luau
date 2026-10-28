@@ -275,41 +275,51 @@ local function runWriteRecord(rec)
 	bufferEqualsBuf(w:data(), rec.bytes)
 end
 
+-- misuse runs one bad declaration on each stream: a write and a measure
+-- raise want, a read refuses value_out_of_range before any bit moves and never
+-- raises (IMPLEMENTING.md U7, U16).
+local function misuse(f: (any) -> any, want: string)
+	raises(function()
+		f(WriteStream.new(buffer.create(16)))
+	end, want)
+	raises(function()
+		f(serialize.MeasureStream.new())
+	end, want)
+	local r = ReadStream.new(buffer.create(16))
+	local ok, result = pcall(f, r)
+	if not ok or result ~= false or r:error() ~= "value_out_of_range" or r:bitsProcessed() ~= 0 then
+		error("read misuse was not refused as value_out_of_range: " .. tostring(result), 2)
+	end
+end
+
 -- The misuse raises (serialize.go panicFixedParams, panicFixedBounds; DESIGN.md (g)).
 local function testMisuse()
-	raises(function()
-		local s = ReadStream.new(buffer.create(16))
-		s:serializeFixed64({ value = 0i }, 0, 8, -100i, 100i)
+	misuse(function(s: any)
+		return s:serializeFixed64({ value = 0i }, 0, 8, -100i, 100i)
 	end, "fixed point requires integer bits >= 1")
 
-	raises(function()
-		local s = ReadStream.new(buffer.create(16))
-		s:serializeFixed64({ value = 0i }, 8, -1, -100i, 100i)
+	misuse(function(s: any)
+		return s:serializeFixed64({ value = 0i }, 8, -1, -100i, 100i)
 	end, "fixed point requires integer bits >= 1")
 
-	raises(function()
-		local s = ReadStream.new(buffer.create(16))
-		s:serializeFixed64({ value = 0i }, 33, 32, 0i, 100i)
+	misuse(function(s: any)
+		return s:serializeFixed64({ value = 0i }, 33, 32, 0i, 100i)
 	end, "fixed point requires integer bits >= 1")
 
-	raises(function()
-		local s = ReadStream.new(buffer.create(16))
-		s:serializeFixed64({ value = 0i }, 8, 8, 100i, -100i)
+	misuse(function(s: any)
+		return s:serializeFixed64({ value = 0i }, 8, 8, 100i, -100i)
 	end, "fixed point requires integer bits >= 1")
 
-	raises(function()
-		local s = ReadStream.new(buffer.create(16))
-		s:serializeFixed128({ value = { lo = 0i, hi = 0i } }, 64, 63, -100i, 100i)
+	misuse(function(s: any)
+		return s:serializeFixed128({ value = { lo = 0i, hi = 0i } }, 64, 63, -100i, 100i)
 	end, "fixed point requires integer bits >= 1")
 
-	raises(function()
-		local s = ReadStream.new(buffer.create(16))
-		s:serializeFixed64({ value = 0i }, 8, 8, -200i, 100i)
+	misuse(function(s: any)
+		return s:serializeFixed64({ value = 0i }, 8, 8, -200i, 100i)
 	end, "fixed point bounds in whole units do not fit the Q format")
 
-	raises(function()
-		local s = ReadStream.new(buffer.create(16))
-		s:serializeFixed64({ value = 0i }, 8, 8, -100i, 200i)
+	misuse(function(s: any)
+		return s:serializeFixed64({ value = 0i }, 8, 8, -100i, 200i)
 	end, "fixed point bounds in whole units do not fit the Q format")
 end
 
