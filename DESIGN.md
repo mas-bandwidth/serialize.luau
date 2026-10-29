@@ -124,7 +124,7 @@ compressed float, which Go's concrete streams all carry):
 | `serializeDouble(h)` | number | `SerializeFloat64` |
 | `serializeCompressedFloat(h, min, max, resolution)` | number | `SerializeCompressedFloat32` |
 | `serializeCompressedFloatPrecomputed(h, maxIntegerValue, bits, delta, min)` | number | `SerializeCompressedFloat32Precomputed` |
-| `serializeBytes(data)` | a buffer, its whole length | `SerializeBytes` |
+| `serializeBytes(data[, offset, count])` | a buffer; by default its whole length, else `count` bytes from `offset` (the reference's `serialize_bytes( stream, data, count )`, with moo's offset). The count is the caller's declaration and is never written. An offset or count that is not an integer inside the buffer is the caller's misuse: a trap on write and measure, `value_out_of_range` on read (U7, U16) | `SerializeBytes` |
 | `serializeString(h, bufferSize)` | string (bytes, well-formed UTF-8, no NUL) | `SerializeString` |
 | `serializeAlign()` | | `SerializeAlign` |
 | `serializeEnd()` | | `SerializeEnd` |
