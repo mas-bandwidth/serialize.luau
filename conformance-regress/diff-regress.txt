@@ -1,0 +1,158 @@
+# Fixed regression vectors for serialize.luau 2.1.3: sequences with a double step, taken from the
+# reference's differential generator (diffgen seed 20261029, 3000 records), where the runner read the
+# 128-bit spelling of a double as its first 16 digits. They stay as written by the reference.
+
+operation sequence
+name regress-double-00
+param step = compressed_float -1000 1000 0.5
+param step = int_relative 1987839176
+param step = bytes 16
+param step = compressed_float -1000 1000 0.5
+param step = float
+param step = double
+param step = float
+bytes F5 00 98 A2 DC E7 01 E2 72 AF 94 6B 82 95 86 53 02 23 25 4C 29 13 9A 49 B0 D8 6A 5F D2 B7 46 BE 03 59 4F AC 8E DB 3F 12 01
+expect value = 0x000000000000000000000000C45B6000 | 0x00000000000000000000000079F728A6 | E2 72 AF 94 6B 82 95 86 53 02 23 25 4C 29 13 9A | 0x000000000000000000000000C470E000 | 0x00000000000000000000000025F6AD8B | 0x0000000000000000EAC4F5903BE46B7D | 0x0000000000000000000000001123FDB8
+consumed 324
+writer canonical
+
+operation sequence
+name regress-double-01
+param step = double
+param step = int_relative 294
+param step = bool
+param step = bool
+bytes 3D DE AB 98 A1 66 84 73 38 42
+expect value = 0x0000000000000000738466A198ABDE3D | 0x00000000000000000000000000000161 | false | true
+consumed 79
+writer canonical
+
+operation sequence
+name regress-double-02
+param step = align
+param step = bits 24
+param step = align
+param step = int 0 1000000
+param step = double
+param step = uint128
+param step = double
+param step = int -2147483648 2147483647
+bytes 54 0D 5F 11 5C BA 11 2E 56 DC 59 68 50 11 ED D4 25 BE BD 34 42 5F 8D E3 5B AC 0B 35 68 A2 A1 4E 45 B9 F6 51 69 17 00 00 00 80
+expect value = - | 0x000000000000000000000000005F0D54 | - | 0x000000000000000000000000000A5C11 | 0x00000000000000001506859DC562E11B | 0x268350BAC5BE38D5F4234BDBE25D4ED1 | 0x000000000000000076951F6B9454EA1A | -0x0000000000000000000000007FFFFFFF
+consumed 332
+
+operation sequence
+name regress-double-03
+param step = int128 -0x00000000000000000000000000000100 0x00000000000000000000000000000100
+param step = bytes 17
+param step = double
+param step = double
+bytes 01 00 12 92 4A F2 81 8C 03 A0 BB 78 F7 CD 69 45 2D A1 05 3E E2 22 B7 8E 6F 02 B6 45 9F FB B0 01 E2 3A 09
+expect value = -0x000000000000000000000000000000FF | 12 92 4A F2 81 8C 03 A0 BB 78 F7 CD 69 45 2D A1 05 | 0x0000000000000000B6026F8EB722E23E | 0x0000000000000000093AE201B0FB9F45
+consumed 280
+writer canonical
+
+operation sequence
+name regress-double-04
+param step = int128 -0x80000000000000000000000000000000 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+param step = double
+param step = bits 33
+param step = int_relative 210
+bytes 4A E7 1B 44 37 8D 24 B7 88 2D 66 A7 A4 DF FE 4D 18 CC 55 54 F5 65 A9 B2 3F B6 5B 9F F0 02
+expect value = -0x3201205B5899D27748DB72C8BBE418B6 | 0x0000000000000000B2A965F55455CC18 | 0x0000000000000000000000009F5BB63F | 0x00000000000000000000000000000101
+consumed 238
+writer canonical
+
+operation sequence
+name regress-double-05
+param step = string 19
+param step = double
+bytes 10 E4 9F 8A 63 EF 9A A2 46 61 EF 9A AC F0 9C AA BC A3 82 86 FC 9A AA 71 0B
+expect value = E4 9F 8A 63 EF 9A A2 46 61 EF 9A AC F0 9C AA BC | 0x00000000000000000B71AA9AFC8682A3
+consumed 200
+writer canonical
+
+operation sequence
+name regress-double-06
+param step = bits 1
+param step = float
+param step = double
+param step = int64 -9223372036854775808 0
+param step = bytes 16
+param step = int128 -0x00000010000000000000000000000000 0x00000010000000000000000000000000
+bytes FE 53 E4 EA F6 B8 2D 59 57 BA DC 68 93 CE 9B 77 80 91 32 05 00 76 01 BA 05 76 9F 09 2E 1D D8 E9 AA DD F8 F4 53 01 00 00 00 00 00 00 00 00 00 00 00 00 A9
+expect value = 0x00000000000000000000000000000000 | 0x000000000000000000000000757229FF | 0x0000000000000000B46E5D2BAC96DC7B | -0x00000000000000007D66B73FC43218B7 | 76 01 BA 05 76 9F 09 2E 1D D8 E9 AA DD F8 F4 53 | -0x0000000FFFFFFFFFFFFFFFFFFFFFFFFF
+consumed 398
+
+operation sequence
+name regress-double-07
+param step = bits 8
+param step = double
+param step = bool
+param step = double
+param step = end
+bytes CF D2 A3 52 36 A9 B1 82 9A 8D D3 86 8A 34 99 4B D0 01
+expect value = 0x000000000000000000000000000000CF | 0x00000000000000009A82B1A93652A3D2 | true | 0x0000000000000000E825CC9A454369C6 | -
+consumed 144
+writer canonical
+
+operation sequence
+name regress-double-08
+param step = double
+bytes 6B A0 80 27 6E 1C 43 9F
+expect value = 0x00000000000000009F431C6E2780A06B
+consumed 64
+writer canonical
+
+operation sequence
+name regress-double-09
+param step = int64 -9223372036854775808 0
+param step = int128 -0x00000000000000000000000000000001 0x00000000000000000000000000000001
+param step = double
+bytes 00 00 00 00 00 00 00 80 F0 3A F3 E3 73 2D A8 BA 02
+expect value = 0x00000000000000000000000000000000 | -0x00000000000000000000000000000001 | 0x0000000000000000AEAA0B5CF8FCCEBC
+consumed 130
+writer canonical
+
+operation sequence
+name regress-double-10
+param step = compressed_float -10 10 0.01
+param step = fixed 32 0 0 7
+param step = int_relative 1313846350
+param step = double
+param step = bytes 14
+param step = fixed 112 16 -9 -9
+param step = uint128
+bytes 0C 32 1A 91 91 96 30 A0 E4 5D 72 05 9A 58 00 83 8D F6 DF 04 58 13 F5 22 DE 9D 0D B0 0B 67 2F 0D 1C A8 D5 F8 18 38 78 E8
+expect refused past_end
+
+operation sequence
+name regress-double-11
+param step = bytes 9
+param step = double
+param step = int64 -1 1
+param step = uint128
+param step = bytes 3
+param step = int64 0 1
+param step = bool
+param step = bytes 15
+bytes 25 F5 BE F5 DB D4 BB 82 AB 5A B8 BD A9 1A 16 0A 35 76 7A D2 45 8B 06 61 B7 31 96 DF 05 6F F7 2F 9C FF 93 72 6A 01 26 BA DE 19 4D A9 92 1E F4 3D 62 E3 11 B5 39
+expect refused nonzero_padding
+
+operation sequence
+name regress-double-12
+param step = int 42 42
+param step = double
+param step = bits 64
+param step = float
+param step = end
+bytes 26 69 4A 6F 45 32 C4 C0 EE 1A 66 34 6B 7A DF 5B C1 0B B5 13 AA
+expect refused trailing_data
+
+operation sequence
+name regress-empty-trailing-string
+param step = int -1000 1000
+param step = string 11
+bytes 00 00 E3 B5 A2 FE EF 8F 92 44
+expect value = -0x000000000000000000000000000003E8 | 
+consumed 16

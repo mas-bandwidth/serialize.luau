@@ -220,6 +220,19 @@ local function decToInt(s: string): integer
 	if negative then
 		s = string.sub(s, 2)
 	end
+	-- A sequence record spells a value either in decimal or, as the reference's
+	-- generator does, as hex (0x, a leading zero-filled 128-bit spelling
+	-- included): the low 64 bits are the value.
+	if string.sub(s, 1, 2) == "0x" or string.sub(s, 1, 2) == "0X" then
+		local acc = 0i
+		for i = 3, #s do
+			acc = integer.bor(integer.lshift(acc, 4i), integer.create(tonumber(s:sub(i, i), 16) :: number))
+		end
+		if negative then
+			acc = integer.sub(0i, acc)
+		end
+		return acc
+	end
 	local hi = 0
 	local lo = 0
 	for i = 1, #s do
@@ -965,7 +978,18 @@ local function runSteps(r: any, steps: { { string } }, out: { any }, poison: boo
 end
 
 local function hexToBits64(hex: string): (number, number)
+	-- A sequence record spells a double either as the 16 digits of its 64 bits
+	-- or, as the reference's generator does, as a 128-bit value (32 digits):
+	-- both are accepted, and a 32-digit spelling must have its upper 64 bits
+	-- zero (the 2.1.2 runner read the first 16 digits of such a spelling, which
+	-- are always zeros, and so failed every generated double).
 	local s = hex:match("0x(%x+)") :: string
+	if #s > 16 then
+		if tonumber(string.sub(s, 1, #s - 16), 16) ~= 0 then
+			return -1, -1
+		end
+		s = string.sub(s, #s - 15)
+	end
 	s = string.rep("0", 16 - #s) .. s
 	local hi = tonumber(string.sub(s, 1, 8), 16) :: number
 	local lo = tonumber(string.sub(s, 9, 16), 16) :: number
@@ -1022,7 +1046,13 @@ local function runSequence(r: any, rec: any)
 		check(not ok, rec.name .. ": refused sequence was accepted")
 	else
 		check(ok, rec.name .. ": accepted sequence was refused (" .. tostring(r:error()) .. ")")
-		local entries = string.split(rec.expect.value, " | ")
+		-- the line's trailing blank is trimmed by the parser, so an empty last
+		-- entry (an empty string) arrives as a value ending in " |"
+		local text = rec.expect.value
+		if string.sub(text, -2) == " |" then
+			text ..= " "
+		end
+		local entries = string.split(text, " | ")
 		check(#entries == #out, rec.name .. ": expect value lists " .. #entries .. " entries, ran " .. #out .. " steps")
 		for i = 1, #entries do
 			checkSeqValue(rec, out[i], entries[i])
