@@ -33,13 +33,13 @@ func TestCorpusRootOverride(t *testing.T) {
 	}
 }
 
-// The extra corpus directories: test/regress/ is always read, then each
+// The extra corpus directories: conformance-regress/ is always read, then each
 // directory of SERIALIZE_CORPUS_EXTRA_DIR; a controls build never reads them
 // (runUnit asks only when u.control is empty); a name in two places is refused
 // and a named directory that is missing is an error.
 func TestExtraCorpusDirs(t *testing.T) {
 	root := t.TempDir()
-	reg := filepath.Join(root, "test", "regress")
+	reg := filepath.Join(root, "conformance-regress")
 	extra := t.TempDir()
 	for dir, name := range map[string]string{reg: "regress.txt", extra: "generated.txt"} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

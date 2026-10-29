@@ -30,7 +30,7 @@
 // mas-bandwidth/serialize main.
 //
 // EXTRA CORPUS DIRECTORIES: besides the corpus root, an ordinary run (never a
-// control) also plants the *.txt files of test/regress/ (this port's fixed
+// control) also plants the *.txt files of conformance-regress/ (this port's fixed
 // regression vectors) and of every directory $SERIALIZE_CORPUS_EXTRA_DIR names
 // (a path list separated by the OS list separator), so a second corpus, the
 // nightly differential's generated file, joins a run without being copied into
@@ -301,9 +301,9 @@ func copyFile(from, to string) error {
 }
 
 // extraDirs are the extra corpus directories of an ordinary run: this port's
-// test/regress/, then each directory of $SERIALIZE_CORPUS_EXTRA_DIR.
+// conformance-regress/, then each directory of $SERIALIZE_CORPUS_EXTRA_DIR.
 func extraDirs(root string) []string {
-	dirs := []string{filepath.Join(root, "test", "regress")}
+	dirs := []string{filepath.Join(root, "conformance-regress")}
 	for _, d := range filepath.SplitList(os.Getenv("SERIALIZE_CORPUS_EXTRA_DIR")) {
 		if d != "" {
 			dirs = append(dirs, d)
@@ -313,7 +313,7 @@ func extraDirs(root string) []string {
 }
 
 // withExtraDirs adds the *.txt files of the extra directories to extra, by base
-// name. A missing test/regress/ adds nothing; a named extra directory that is
+// name. A missing conformance-regress/ adds nothing; a named extra directory that is
 // missing is an error, never a silent skip.
 func withExtraDirs(root string, extra map[string][]byte) (map[string][]byte, error) {
 	out := map[string][]byte{}
