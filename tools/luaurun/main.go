@@ -29,6 +29,14 @@
 // one, which is how the nightly functional test points the runner at
 // mas-bandwidth/serialize main.
 //
+// EXTRA CORPUS DIRECTORIES: besides the corpus root, an ordinary run (never a
+// control) also plants the *.txt files of test/regress/ (this port's fixed
+// regression vectors) and of every directory $SERIALIZE_CORPUS_EXTRA_DIR names
+// (a path list separated by the OS list separator), so a second corpus, the
+// nightly differential's generated file, joins a run without being copied into
+// the root. A control builds from the root alone, so an added file can never
+// trip a control's expected list. A name already in the root is refused.
+//
 // THE NEGATIVE CONTROLS (STANDARD.md, "A gate nobody has seen go red"):
 // luaurun -root <repo> -controls runs every control of
 // tools/controls/controls.tsv. Each builds build/run/control-<name>/ as the
@@ -224,7 +232,16 @@ func runUnit(root, luau string, u runSpec, stdout, stderr io.Writer) bool {
 			return false
 		}
 	}
-	inputs, err := inputsModule(filepath.Join(corpusDir(root), "conformance"), u.extra)
+	extra := u.extra
+	if u.control == "" {
+		var err error
+		extra, err = withExtraDirs(root, extra)
+		if err != nil {
+			fmt.Fprintf(stderr, "luaurun: %v\n", err)
+			return false
+		}
+	}
+	inputs, err := inputsModule(filepath.Join(corpusDir(root), "conformance"), extra)
 	if err != nil {
 		fmt.Fprintf(stderr, "luaurun: %v\n", err)
 		return false
@@ -281,6 +298,52 @@ func copyFile(from, to string) error {
 		return err
 	}
 	return os.WriteFile(to, b, 0o644)
+}
+
+// extraDirs are the extra corpus directories of an ordinary run: this port's
+// test/regress/, then each directory of $SERIALIZE_CORPUS_EXTRA_DIR.
+func extraDirs(root string) []string {
+	dirs := []string{filepath.Join(root, "test", "regress")}
+	for _, d := range filepath.SplitList(os.Getenv("SERIALIZE_CORPUS_EXTRA_DIR")) {
+		if d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
+}
+
+// withExtraDirs adds the *.txt files of the extra directories to extra, by base
+// name. A missing test/regress/ adds nothing; a named extra directory that is
+// missing is an error, never a silent skip.
+func withExtraDirs(root string, extra map[string][]byte) (map[string][]byte, error) {
+	out := map[string][]byte{}
+	for k, v := range extra {
+		out[k] = v
+	}
+	for i, d := range extraDirs(root) {
+		if _, err := os.Stat(d); err != nil {
+			if i == 0 {
+				continue
+			}
+			return nil, fmt.Errorf("SERIALIZE_CORPUS_EXTRA_DIR %s: %v", d, err)
+		}
+		files, err := filepath.Glob(filepath.Join(d, "*.txt"))
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			text, err := os.ReadFile(f)
+			if err != nil {
+				return nil, err
+			}
+			name := strings.TrimSuffix(filepath.Base(f), ".txt")
+			if _, clash := out[name]; clash {
+				return nil, fmt.Errorf("extra corpus file %s.txt is named twice", name)
+			}
+			out[name] = text
+		}
+	}
+	return out, nil
 }
 
 // inputsModule is the Luau source of inputs.luau: a frozen table mapping each

@@ -965,7 +965,18 @@ local function runSteps(r: any, steps: { { string } }, out: { any }, poison: boo
 end
 
 local function hexToBits64(hex: string): (number, number)
+	-- A sequence record spells a double either as the 16 digits of its 64 bits
+	-- or, as the reference's generator does, as a 128-bit value (32 digits):
+	-- both are accepted, and a 32-digit spelling must have its upper 64 bits
+	-- zero (the 2.1.2 runner read the first 16 digits of such a spelling, which
+	-- are always zeros, and so failed every generated double).
 	local s = hex:match("0x(%x+)") :: string
+	if #s > 16 then
+		if tonumber(string.sub(s, 1, #s - 16), 16) ~= 0 then
+			return -1, -1
+		end
+		s = string.sub(s, #s - 15)
+	end
 	s = string.rep("0", 16 - #s) .. s
 	local hi = tonumber(string.sub(s, 1, 8), 16) :: number
 	local lo = tonumber(string.sub(s, 9, 16), 16) :: number
