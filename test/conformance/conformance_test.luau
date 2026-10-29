@@ -220,6 +220,19 @@ local function decToInt(s: string): integer
 	if negative then
 		s = string.sub(s, 2)
 	end
+	-- A sequence record spells a value either in decimal or, as the reference's
+	-- generator does, as hex (0x, a leading zero-filled 128-bit spelling
+	-- included): the low 64 bits are the value.
+	if string.sub(s, 1, 2) == "0x" or string.sub(s, 1, 2) == "0X" then
+		local acc = 0i
+		for i = 3, #s do
+			acc = integer.bor(integer.lshift(acc, 4i), integer.create(tonumber(s:sub(i, i), 16) :: number))
+		end
+		if negative then
+			acc = integer.sub(0i, acc)
+		end
+		return acc
+	end
 	local hi = 0
 	local lo = 0
 	for i = 1, #s do
