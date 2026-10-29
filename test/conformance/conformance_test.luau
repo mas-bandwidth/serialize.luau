@@ -1046,7 +1046,13 @@ local function runSequence(r: any, rec: any)
 		check(not ok, rec.name .. ": refused sequence was accepted")
 	else
 		check(ok, rec.name .. ": accepted sequence was refused (" .. tostring(r:error()) .. ")")
-		local entries = string.split(rec.expect.value, " | ")
+		-- the line's trailing blank is trimmed by the parser, so an empty last
+		-- entry (an empty string) arrives as a value ending in " |"
+		local text = rec.expect.value
+		if string.sub(text, -2) == " |" then
+			text ..= " "
+		end
+		local entries = string.split(text, " | ")
 		check(#entries == #out, rec.name .. ": expect value lists " .. #entries .. " entries, ran " .. #out .. " steps")
 		for i = 1, #entries do
 			checkSeqValue(rec, out[i], entries[i])

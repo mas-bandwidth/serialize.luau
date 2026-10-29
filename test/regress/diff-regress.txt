@@ -148,3 +148,11 @@ param step = float
 param step = end
 bytes 26 69 4A 6F 45 32 C4 C0 EE 1A 66 34 6B 7A DF 5B C1 0B B5 13 AA
 expect refused trailing_data
+
+operation sequence
+name regress-empty-trailing-string
+param step = int -1000 1000
+param step = string 11
+bytes 00 00 E3 B5 A2 FE EF 8F 92 44
+expect value = -0x000000000000000000000000000003E8 | 
+consumed 16
