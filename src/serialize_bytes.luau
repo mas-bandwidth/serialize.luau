@@ -248,6 +248,10 @@ local function bytesRange(data: any, offset: any, count: any): (number?, number?
 		return nil, nil, RAISE_BYTES_DATA
 	end
 	local len = buffer.len(data)
+	if offset == nil and count == nil then
+		-- the whole-buffer form, the hot one: nothing to validate
+		return 0, len, nil
+	end
 	local off = if offset == nil then 0 else offset
 	if type(off) ~= "number" or off % 1 ~= 0 or off < 0 or off > len then
 		return nil, nil, RAISE_BYTES_RANGE
