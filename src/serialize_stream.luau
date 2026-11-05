@@ -452,12 +452,20 @@ end
 
 -- reset points the stream at data and clears all read state, including a
 -- latched error (STANDARD.md, Reader Obligations: a failure persists until the
--- stream is re-initialized). The context is kept.
+-- stream is re-initialized). The context is kept. Data that is not a buffer
+-- installs an empty stream already refused as value_out_of_range (a read never
+-- raises, U7, U16); a later reset over a buffer clears it.
 function ReadStream.reset(self: any, data: buffer)
-	self._data = data
-	self._numBits = buffer.len(data) * 8
 	self._bits = 0
 	self._packer = nil
+	if typeof(data) ~= "buffer" then
+		self._data = buffer.create(0)
+		self._numBits = 0
+		self._error = SerializeError.ValueOutOfRange
+		return
+	end
+	self._data = data
+	self._numBits = buffer.len(data) * 8
 	self._error = nil
 end
 
