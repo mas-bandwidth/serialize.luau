@@ -348,4 +348,88 @@ function T.TestLedgerUint64WriteNumber()
 	end, "serialize: serializeBits64 value must be an integer")
 end
 
+-- Every public read that takes a holder checks it once, before any bit moves
+-- (U7, U16): a plain table, or a table whose value is a raw field, is accepted;
+-- a non-table, a frozen table and a table with a metatable and no raw value are
+-- refused as value_out_of_range, consume nothing, and run no metamethod.
+function T.TestReadHolderChecked()
+	local reads: { { any } } = {
+		{ "serializeBool", function(r: any, h: any) return r:serializeBool(h) end },
+		{ "serializeBits", function(r: any, h: any) return r:serializeBits(h, 5) end },
+		{ "serializeBits64", function(r: any, h: any) return r:serializeBits64(h, 40) end },
+		{ "serializeUint8", function(r: any, h: any) return r:serializeUint8(h) end },
+		{ "serializeUint16", function(r: any, h: any) return r:serializeUint16(h) end },
+		{ "serializeUint32", function(r: any, h: any) return r:serializeUint32(h) end },
+		{ "serializeUint64", function(r: any, h: any) return r:serializeUint64(h) end },
+		{ "serializeUint128", function(r: any, h: any) return r:serializeUint128(h) end },
+		{ "serializeFloat", function(r: any, h: any) return r:serializeFloat(h) end },
+		{ "serializeDouble", function(r: any, h: any) return r:serializeDouble(h) end },
+		{ "serializeInt", function(r: any, h: any) return r:serializeInt(h, 0, 100) end },
+		{ "serializeInt64", function(r: any, h: any) return r:serializeInt64(h, 0i, 100i) end },
+		{ "serializeInt128", function(r: any, h: any) return r:serializeInt128(h, i128(0i, 0i), i128(100i, 0i)) end },
+		{ "serializeFixed64", function(r: any, h: any) return r:serializeFixed64(h, 4, 4, 0i, 16i) end },
+		{ "serializeFixed128", function(r: any, h: any) return r:serializeFixed128(h, 4, 4, 0i, 16i) end },
+		{ "serializeIntRelative", function(r: any, h: any) return r:serializeIntRelative(10, h) end },
+		{ "serializeCompressedFloat", function(r: any, h: any) return r:serializeCompressedFloat(h, 0, 1, 0.1) end },
+		{ "serializeCompressedFloatPrecomputed", function(r: any, h: any) return r:serializeCompressedFloatPrecomputed(h, 255, 8, 1, 0) end },
+		{ "serializeString", function(r: any, h: any) return r:serializeString(h, 16) end },
+	}
+	local hooks = 0
+	local function hooked(raw: any): any
+		return setmetatable(raw, {
+			__index = function()
+				hooks += 1
+				return nil
+			end,
+			__newindex = function()
+				hooks += 1
+			end,
+		})
+	end
+	local indexOnly: any = setmetatable({}, { __index = function() hooks += 1 return nil end })
+	local refused: { { any } } = {
+		{ "nil", function() return nil end },
+		{ "number", function() return 7 end },
+		{ "string", function() return "x" end },
+		{ "frozen table", function() return table.freeze({ value = 1 }) end },
+		{ "frozen empty table", function() return table.freeze({}) end },
+		{ "__newindex without a raw value", function() return hooked({}) end },
+		{ "__index only", function() return indexOnly end },
+	}
+	local accepted: { { any } } = {
+		{ "plain empty table", function() return {} end },
+		{ "plain table with value", function() return { value = 99 } end },
+		{ "raw value behind __newindex", function() return hooked({ value = 99 }) end },
+	}
+	for _, read in reads do
+		local name, call = read[1], read[2]
+		for _, holder in refused do
+			local data = buffer.create(32)
+			local r = serialize.ReadStream.new(data)
+			hooks = 0
+			local ok, result = pcall(call, r, holder[2]())
+			local what = name .. " into " .. holder[1]
+			check(ok, what .. ": raised " .. tostring(result))
+			check(result == false, what .. ": the read was accepted")
+			check(r:error() == OUT, what .. ": refused as " .. tostring(r:error()) .. ", not value_out_of_range")
+			check(r:bitsProcessed() == 0, what .. ": consumed " .. r:bitsProcessed() .. " bits")
+			check(hooks == 0, what .. ": ran a metamethod")
+			local failed = serialize.ReadStream.new(data)
+			failed:reject()
+			local ok2, result2 = pcall(call, failed, holder[2]())
+			check(ok2 and result2 == false and failed:error() == reasons.Rejected, what .. ": a failed stream did not keep its first reason")
+		end
+		for _, holder in accepted do
+			local r = serialize.ReadStream.new(buffer.create(32))
+			hooks = 0
+			local h = holder[2]()
+			local what = name .. " into " .. holder[1]
+			local ok, result = pcall(call, r, h)
+			check(ok and result == true, what .. ": refused as " .. tostring(r:error()) .. " " .. tostring(result))
+			check(rawget(h, "value") ~= nil, what .. ": the holder was not written")
+			check(hooks == 0, what .. ": ran a metamethod")
+		end
+	end
+end
+
 return T

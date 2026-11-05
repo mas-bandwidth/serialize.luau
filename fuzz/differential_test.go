@@ -67,6 +67,7 @@ type step struct {
 type program struct {
 	steps    []step
 	mutate   []string // nil for a program that is not mutated
+	holder   string   // "" for the plain holders every program reads into; else a holder kind of driver.luau
 	expected string   // the canonical read-back trace
 }
 
@@ -797,6 +798,9 @@ func buildBatchText(programs []program) string {
 	var sb strings.Builder
 	for _, p := range programs {
 		sb.WriteString("P\n")
+		if p.holder != "" {
+			sb.WriteString("H " + p.holder + "\n")
+		}
 		for _, st := range p.steps {
 			sb.WriteString(st.text())
 		}
@@ -1037,5 +1041,60 @@ func TestDifferentialNegativeControl(t *testing.T) {
 	}
 	if detected == 0 {
 		t.Error("negative control: no divergence detected (widenRange did not change the wire)")
+	}
+}
+
+// TestReadHolderSeeds reads fixed-seed programs into holders of each kind. A
+// holder that is a plain table, or has its value as a raw field behind a write
+// metamethod, reads exactly as serialize.go does. A frozen holder, or a
+// metatable with no raw value, is refused as value_out_of_range at the first
+// read, before any bit moves, and no metamethod runs.
+func TestReadHolderSeeds(t *testing.T) {
+	t.Parallel()
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot = filepath.Dir(repoRoot)
+	r := rand.New(rand.NewPCG(20261105, seedStream))
+	kinds := []struct {
+		name    string
+		refused bool
+	}{
+		{"plain", false},
+		{"rawhook", false},
+		{"frozen", true},
+		{"hook", true},
+		{"indexonly", true},
+	}
+	var programs []program
+	for len(programs) < 40*len(kinds) {
+		p := genProgram(r)
+		switch p.steps[0].op {
+		case "by", "al", "ob":
+			continue // the first step takes no holder
+		}
+		p.holder = kinds[len(programs)%len(kinds)].name
+		programs = append(programs, p)
+	}
+	lines := runBatch(t, repoRoot, buildBatchText(programs))
+	if len(lines) != 3*len(programs) {
+		t.Fatalf("driver output: %d lines, want %d", len(lines), 3*len(programs))
+	}
+	for i, p := range programs {
+		want := goRead(writeGoProgram(p), p)
+		if kinds[i%len(kinds)].refused {
+			want = "E:value_out_of_range"
+		}
+		w, rd, k := lines[3*i], lines[3*i+1], lines[3*i+2]
+		if !strings.HasPrefix(w, "W ") {
+			t.Errorf("program %d (%s): write line %q", i, p.holder, w)
+		}
+		if got := strings.TrimPrefix(rd, "R "); got != want {
+			t.Errorf("program %d (%s): read trace\n  want: %s\n  luau: %s", i, p.holder, want, got)
+		}
+		if k != "K 0" {
+			t.Errorf("program %d (%s): a holder metamethod ran: %s", i, p.holder, k)
+		}
 	}
 }

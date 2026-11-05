@@ -129,6 +129,10 @@ local function parseProgram(lines)
 				words[#words + 1] = t
 			end
 		end
+		if op == "H" then
+			prog.holder = tokens[2]
+			continue
+		end
 		local st = { op = op, words = words }
 		if op == "b" or op == "b64" then
 			st.bits = words[#words]
@@ -215,8 +219,50 @@ local function writeProgram(prog)
 	return data, ws:error() .. " " .. lastop
 end
 
+-- mkHolder builds the holder a read stores into. A program carries a holder
+-- kind (an "H <kind>" line) only in the holder seeds; every other program reads
+-- into a plain table. The kinds: plain; rawhook, a raw value behind a write
+-- metamethod; frozen; hook, a metatable with a write metamethod and no raw
+-- value; indexonly, a metatable with a read metamethod and no raw value. Every
+-- metamethod counts itself in hooks, and the seeds require the count be zero.
+local holderKind = nil
+local hooks = 0
+
+local function mkHolder(init)
+	local kind = holderKind
+	if kind == nil or kind == "plain" then
+		return { value = init }
+	elseif kind == "rawhook" then
+		return setmetatable({ value = init }, {
+			__newindex = function()
+				hooks += 1
+			end,
+		})
+	elseif kind == "frozen" then
+		return table.freeze({ value = init })
+	elseif kind == "hook" then
+		return setmetatable({}, {
+			__index = function()
+				hooks += 1
+				return init
+			end,
+			__newindex = function()
+				hooks += 1
+			end,
+		})
+	end
+	return setmetatable({}, {
+		__index = function()
+			hooks += 1
+			return init
+		end,
+	})
+end
+
 local function readProgram(prog, data)
 	local rs = S.ReadStream.new(data)
+	holderKind = prog.holder
+	hooks = 0
 	local toks = {}
 	for _, st in ipairs(prog) do
 		local op = st.op
@@ -224,71 +270,71 @@ local function readProgram(prog, data)
 		local ok
 		local tok
 		if op == "b" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeBits(h, st.bits)
 			tok = "d" .. tostring(h.value)
 		elseif op == "b64" then
-			local h = { value = 0i }
+			local h = mkHolder(0i)
 			ok = rs:serializeBits64(h, st.bits)
 			tok = hex64(h.value)
 		elseif op == "bl" then
-			local h = { value = false }
+			local h = mkHolder(false)
 			ok = rs:serializeBool(h)
 			tok = h.value and "t" or "f"
 		elseif op == "u8" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeUint8(h)
 			tok = "d" .. tostring(h.value)
 		elseif op == "u16" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeUint16(h)
 			tok = "d" .. tostring(h.value)
 		elseif op == "u32" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeUint32(h)
 			tok = "d" .. tostring(h.value)
 		elseif op == "u64" then
-			local h = { value = 0i }
+			local h = mkHolder(0i)
 			ok = rs:serializeUint64(h)
 			tok = hex64(h.value)
 		elseif op == "i" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeInt(h, i32(w[2]), i32(w[3]))
 			tok = "d" .. tostring(h.value)
 		elseif op == "i64" then
-			local h = { value = 0i }
+			local h = mkHolder(0i)
 			ok = rs:serializeInt64(h, bin64(w[3], w[4]), bin64(w[5], w[6]))
 			tok = hex64(h.value)
 		elseif op == "i128" then
-			local h = { value = S.Int128.new(0i, 0i) }
+			local h = mkHolder(S.Int128.new(0i, 0i))
 			ok = rs:serializeInt128(h, n128({ w[5], w[6], w[7], w[8] }), n128({ w[9], w[10], w[11], w[12] }))
 			tok = hex128(h.value)
 		elseif op == "u128" then
-			local h = { value = S.Int128.new(0i, 0i) }
+			local h = mkHolder(S.Int128.new(0i, 0i))
 			ok = rs:serializeUint128(h)
 			tok = hex128(h.value)
 		elseif op == "fx" then
-			local h = { value = 0i }
+			local h = mkHolder(0i)
 			ok = rs:serializeFixed64(h, w[3], w[4], bin64(w[5], w[6]), bin64(w[7], w[8]))
 			tok = hex64(h.value)
 		elseif op == "f128" then
-			local h = { value = S.Int128.new(0i, 0i) }
+			local h = mkHolder(S.Int128.new(0i, 0i))
 			ok = rs:serializeFixed128(h, w[5], w[6], bin64(w[7], w[8]), bin64(w[9], w[10]))
 			tok = hex128(h.value)
 		elseif op == "cf" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeCompressedFloat(h, FLT.f32frombits(w[2]), FLT.f32frombits(w[3]), FLT.f32frombits(w[4]))
 			tok = "f" .. string.format("%08x", FLT.f32bits(h.value))
 		elseif op == "ir" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeIntRelative(i32(w[1]), h)
 			tok = "d" .. tostring(h.value)
 		elseif op == "f" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeFloat(h)
 			tok = "f" .. string.format("%08x", FLT.f32bits(h.value))
 		elseif op == "d" then
-			local h = { value = 0 }
+			local h = mkHolder(0)
 			ok = rs:serializeDouble(h)
 			local lo, hi = dblWords(h.value)
 			tok = "D" .. tostring(lo) .. ":" .. tostring(hi)
@@ -297,7 +343,7 @@ local function readProgram(prog, data)
 			ok = rs:serializeBytes(dst)
 			tok = "B" .. bufToHex(dst)
 		elseif op == "s" then
-			local h = { value = "" }
+			local h = mkHolder("")
 			ok = rs:serializeString(h, st.bufsize)
 			tok = "S" .. strToHex(h.value)
 		elseif op == "al" then
@@ -380,6 +426,9 @@ while base <= n do
 			print("W " .. bufToHex(data))
 		end
 		print("R " .. readProgram(prog, data))
+		if prog.holder ~= nil then
+			print("K " .. tostring(hooks))
+		end
 		if mutateTokens ~= nil then
 			local mutated = applyMutation(data, mutateTokens)
 			print("M " .. readProgram(prog, mutated))
