@@ -228,6 +228,14 @@ end
 local holderKind = nil
 local hooks = 0
 
+-- hit counts a metamethod run by the library; the driver reads its own holder
+-- to print a trace, and that read is not counted.
+local function hit()
+	if debug.info(3, "s") ~= debug.info(1, "s") then
+		hooks += 1
+	end
+end
+
 local function mkHolder(init)
 	local kind = holderKind
 	if kind == nil or kind == "plain" then
@@ -235,7 +243,7 @@ local function mkHolder(init)
 	elseif kind == "rawhook" then
 		return setmetatable({ value = init }, {
 			__newindex = function()
-				hooks += 1
+				hit()
 			end,
 		})
 	elseif kind == "frozen" then
@@ -243,17 +251,17 @@ local function mkHolder(init)
 	elseif kind == "hook" then
 		return setmetatable({}, {
 			__index = function()
-				hooks += 1
+				hit()
 				return init
 			end,
 			__newindex = function()
-				hooks += 1
+				hit()
 			end,
 		})
 	end
 	return setmetatable({}, {
 		__index = function()
-			hooks += 1
+			hit()
 			return init
 		end,
 	})
