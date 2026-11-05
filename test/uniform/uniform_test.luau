@@ -251,6 +251,72 @@ function T.TestU14RefusalNameAndFail()
 	end }) == false and r:error() == reasons.NonCanonical, "an object's closed-list reason is kept")
 end
 
+-- a latched read stream refuses an object before it resolves the object's
+-- serialize method: a table whose lookup counts calls sees none, the first
+-- reason is kept and nothing is returned but false.
+function T.TestReadFailedObjectSkipsLookup()
+	local lookups = 0
+	local counted = setmetatable({}, {
+		__index = function(_, _key: any): any
+			lookups += 1
+			return function(): boolean
+				return true
+			end
+		end,
+	})
+	local r = serialize.ReadStream.new(buffer.create(8))
+	check(r:fail(reasons.TrailingData) == false, "the first refusal returns false")
+	check(r:serializeObject(counted) == false, "a failed stream accepted an object")
+	check(lookups == 0, "a failed stream resolved the object's method " .. lookups .. " times")
+	check(r:error() == reasons.TrailingData, "the first reason was replaced by " .. tostring(r:error()))
+end
+
+-- the same refusal for every reason of the closed list as the first one, and
+-- for objects of every shape: none is looked into, and the reason stays.
+function T.TestReadFailedObjectSeeds()
+	local lookups = 0
+	local counted = setmetatable({}, {
+		__index = function(_, _key: any): any
+			lookups += 1
+			return nil
+		end,
+	})
+	local called = false
+	local shapes: { any } = {
+		counted,
+		{},
+		{ serialize = 5 },
+		{ serialize = function(): boolean
+			called = true
+			return true
+		end },
+		"text",
+		7,
+	}
+	for _, reason in
+		{
+			reasons.PastEnd,
+			reasons.ValueOutOfRange,
+			reasons.NonzeroPadding,
+			reasons.TrailingData,
+			reasons.NonFiniteFloat,
+			reasons.InvalidUtf8,
+			reasons.EmbeddedNul,
+			reasons.NonCanonical,
+			reasons.Rejected,
+		}
+	do
+		for i, shape in shapes do
+			local r = serialize.ReadStream.new(buffer.create(8))
+			r:fail(reason)
+			check(r:serializeObject(shape) == false, "shape " .. i .. " was accepted after " .. tostring(reason))
+			check(r:error() == reason, "shape " .. i .. " replaced " .. tostring(reason) .. " by " .. tostring(r:error()))
+		end
+	end
+	check(lookups == 0, "a failed stream resolved a method " .. lookups .. " times")
+	check(not called, "a failed stream ran an object")
+end
+
 -- U15: serialize_copy_string, the reference helper: at most destSize - 1
 -- bytes, stopping at a NUL, cut back to a UTF-8 boundary.
 function T.TestU15CopyString()
