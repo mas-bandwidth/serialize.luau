@@ -215,8 +215,8 @@ local function writeProgram(prog)
 	return data, ws:error() .. " " .. lastop
 end
 
-local function readProgram(prog, data)
-	local rs = S.ReadStream.new(data)
+local function readProgram(prog, data, stream)
+	local rs = stream or S.ReadStream.new(data)
 	local toks = {}
 	for _, st in ipairs(prog) do
 		local op = st.op
@@ -333,11 +333,28 @@ local function readProgram(prog, data)
 	return table.concat(toks, " ")
 end
 
+-- resetProgram reads a program on a stream that has been used, reset over
+-- something that is not a buffer, and reset over the data. It reports the
+-- refused state after each bad reset, then the read-back trace.
+local function resetProgram(prog, data)
+	local rs = S.ReadStream.new(buffer.create(8))
+	rs:serializeBits({ value = 0 }, 3)
+	local states = {}
+	local bad: { any } = { false, 7, "text", {}, nil }
+	for i = 1, 5 do
+		local ok = pcall(rs.reset, rs, bad[i])
+		states[#states + 1] = if ok then tostring(rs:error()) .. ":" .. tostring(rs:bitsProcessed()) else "raised"
+	end
+	rs:reset(data)
+	return table.concat(states, ",") .. " " .. readProgram(prog, data, rs)
+end
+
 local input = require("./inputs")
 local lines = {}
 for ln in string.gmatch(input, "[^\n]+") do
 	lines[#lines + 1] = ln
 end
+local resetMode = lines[1] == "RESET"
 
 local i = 1
 local n = #lines
@@ -378,6 +395,11 @@ while base <= n do
 			print("WE " .. werr)
 		else
 			print("W " .. bufToHex(data))
+		end
+		if resetMode then
+			print("X " .. resetProgram(prog, data))
+			base = cur
+			continue
 		end
 		print("R " .. readProgram(prog, data))
 		if mutateTokens ~= nil then

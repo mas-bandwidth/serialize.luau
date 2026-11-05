@@ -1039,3 +1039,36 @@ func TestDifferentialNegativeControl(t *testing.T) {
 		t.Error("negative control: no divergence detected (widenRange did not change the wire)")
 	}
 }
+
+// TestReadResetSeeds reads each seeded program on a stream that was used, then
+// reset over values that are not buffers, then reset over the program's bytes.
+// Every bad reset must leave the stream refused as value_out_of_range with no
+// bits processed, and the read after the valid reset must give the serialize.go
+// read-back trace.
+func TestReadResetSeeds(t *testing.T) {
+	t.Parallel()
+	r := rand.New(rand.NewPCG(20261105, seedStream))
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot = filepath.Dir(repoRoot)
+	programs := genBatch(r, batchSize)
+	lines := runBatch(t, repoRoot, "RESET\n"+buildBatchText(programs))
+	if len(lines) != len(programs) {
+		t.Fatalf("driver gave %d lines for %d programs", len(lines), len(programs))
+	}
+	wantStates := strings.TrimSuffix(strings.Repeat("value_out_of_range:0,", 5), ",")
+	for i, p := range programs {
+		states, trace, ok := strings.Cut(strings.TrimPrefix(lines[i], "X "), " ")
+		if !ok {
+			t.Fatalf("program %d: malformed line %q", i, lines[i])
+		}
+		if states != wantStates {
+			t.Errorf("program %d: states after bad resets %q, want %q", i, states, wantStates)
+		}
+		if want := goRead(writeGoProgram(p), p); trace != want {
+			t.Errorf("program %d: read after reset\n  go:   %s\n  luau: %s", i, want, trace)
+		}
+	}
+}

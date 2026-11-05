@@ -348,4 +348,56 @@ function T.TestLedgerUint64WriteNumber()
 	end, "serialize: serializeBits64 value must be an integer")
 end
 
+-- A read stream built or reset over something that is not a buffer is installed
+-- already refused as value_out_of_range, never a raise, with no bits and no
+-- state left from the stream's earlier input; a later valid reset reads
+-- normally.
+function T.TestReadInvalidBufferRefused()
+	local function valid(): buffer
+		local d = buffer.create(8)
+		buffer.writeu8(d, 0, 0x2A)
+		return d
+	end
+	local function readsNormally(r: any)
+		check(r:ok() and r:error() == nil, "the valid reset left a failure latched")
+		local h: any = { value = 0 }
+		check(r:serializeBits(h, 8), "the read after a valid reset refused " .. tostring(r:error()))
+		check(h.value == 0x2A, "the value read after a valid reset was " .. tostring(h.value))
+		check(r:bitsProcessed() == 8, "the bit index after a valid reset was " .. r:bitsProcessed())
+	end
+	local bad: { any } = { false, 7, "text", {} }
+	for _, v in bad do
+		local ok, r = pcall(serialize.ReadStream.new, v)
+		check(ok, "new over " .. typeof(v) .. " raised: " .. tostring(r))
+		check(r:error() == OUT, "new over " .. typeof(v) .. " refused as " .. tostring(r:error()))
+		check(r:bitsProcessed() == 0, "new over " .. typeof(v) .. " counted bits")
+		local h: any = { value = 99 }
+		check(r:serializeBits(h, 8) == false and h.value == 99, "a read on a refused stream was accepted")
+		local ok2, err2 = pcall(r.reset, r, valid())
+		check(ok2, "valid reset raised: " .. tostring(err2))
+		readsNormally(r)
+	end
+	do
+		local ok, r = pcall(serialize.ReadStream.new, nil)
+		check(ok, "new over nil raised: " .. tostring(r))
+		check(r:error() == OUT and r:bitsProcessed() == 0, "new over nil was not refused")
+		r:reset(valid())
+		readsNormally(r)
+	end
+	for _, v in { false, 7, "text", {}, (nil :: any) } do
+		local r = serialize.ReadStream.new(valid())
+		local h: any = { value = 0 }
+		check(r:serializeBits(h, 8), "the first read refused")
+		check(r:bitsProcessed() == 8, "the first read moved no bits")
+		local ok, err = pcall(r.reset, r, v)
+		check(ok, "reset over " .. typeof(v) .. " raised: " .. tostring(err))
+		check(r:error() == OUT, "reset over " .. typeof(v) .. " refused as " .. tostring(r:error()))
+		check(r:bitsProcessed() == 0, "reset over " .. typeof(v) .. " kept " .. r:bitsProcessed() .. " bits")
+		local g: any = { value = 99 }
+		check(r:serializeBits(g, 8) == false and g.value == 99, "a read on a refused stream was accepted")
+		r:reset(valid())
+		readsNormally(r)
+	end
+end
+
 return T
