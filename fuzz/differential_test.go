@@ -1054,7 +1054,12 @@ func TestReadResetSeeds(t *testing.T) {
 	}
 	repoRoot = filepath.Dir(repoRoot)
 	programs := genBatch(r, batchSize)
-	lines := runBatch(t, repoRoot, "RESET\n"+buildBatchText(programs))
+	var lines []string
+	for _, l := range runBatch(t, repoRoot, "RESET\n"+buildBatchText(programs)) {
+		if strings.HasPrefix(l, "X ") {
+			lines = append(lines, l)
+		}
+	}
 	if len(lines) != len(programs) {
 		t.Fatalf("driver gave %d lines for %d programs", len(lines), len(programs))
 	}
