@@ -30,7 +30,7 @@ ranged-range	serialize_int_relative.luau	if offset > bucket.max - bucket.min the
 ranged-range	serialize_bytes.luau	if offset > maxLength then	if offset > maxLength and offset < 0 then
 ranged-reconstruction	serialize_int.luau	holder.value = offset + min	holder.value = offset
 ranged-reconstruction	serialize_int_relative.luau	previous + bucket.min + offset	previous + offset
-object-terminal	serialize_stream.luau	if self._error ~= nil then\n\t\treturn false\n\tend\n\tlocal ok, err = (method :: any)(object, self)	local ok, err = (method :: any)(object, self)
+object-terminal	serialize_stream.luau	if self._error ~= nil then\n\t\treturn false\n\tend\n\tlocal method: any = if type(object) == "table" then object.serialize else nil	local method: any = if type(object) == "table" then object.serialize else nil
 object-terminal	serialize_stream.luau	return self:_fail(if err ~= nil then err else SerializeError.Rejected)\n\tend\n\treturn self._error == nil	return self:_fail(if err ~= nil then err else SerializeError.Rejected)\n\tend\n\treturn true
 object-latch-rejected	serialize_stream.luau	return self:_fail(if err ~= nil then err else SerializeError.Rejected)	return self:_fail(if err ~= nil then err else "object")
 reject-reason	serialize_stream.luau	return self:_fail(SerializeError.Rejected)	return self:_fail(SerializeError.ValueOutOfRange)

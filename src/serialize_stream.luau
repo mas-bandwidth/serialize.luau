@@ -201,12 +201,12 @@ Shared.alignBits = Shared._alignBits
 -- rejected; IMPLEMENTING.md U2). It goes through the one latch, so a reason a
 -- primitive inside the object latched first is kept (DESIGN.md (a)).
 function Shared.serializeObject(self: any, object: any): boolean
+	if self._error ~= nil then
+		return false
+	end
 	local method: any = if type(object) == "table" then object.serialize else nil
 	if type(method) ~= "function" then
 		return self:_misuse(RAISE_NOT_AN_OBJECT)
-	end
-	if self._error ~= nil then
-		return false
 	end
 	local ok, err = (method :: any)(object, self)
 	if not ok and self._kind ~= "read" then
