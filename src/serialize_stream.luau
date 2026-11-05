@@ -267,16 +267,12 @@ local FIXED: { { any } } = {
 	{ "serializeUint128", "int128", "Uint128", 128 },
 }
 
--- holderWritable is the one holder check of a public read (U7, U16): a table
--- that is not frozen and either has no metatable or holds its value as a raw
--- field, so the assignment after the read is a raw store that cannot raise and
--- runs no metamethod. It looks at nothing but the holder and runs once per
--- public call, before any bit moves.
-local function holderWritable(holder: any): boolean
-	return type(holder) == "table"
-		and not table.isfrozen(holder)
-		and (rawget(holder, "value") ~= nil or getmetatable(holder) == nil)
-end
+-- The one holder check of a public read (U7, U16), written out in each public
+-- read: a holder is a table that is not frozen and either has no metatable or
+-- holds its value as a raw field, so the assignment after the read is a raw
+-- store that cannot raise and runs no metamethod. It looks at nothing but the
+-- holder and runs once per public call, before any bit moves.
+local isfrozen = table.isfrozen
 
 local function class(kind: string): any
 	local c: any = {}
@@ -288,14 +284,14 @@ local function class(kind: string): any
 		local method, name, arm = row[1], row[2], kind .. row[3]
 		if kind == "read" and method == "serializeIntRelative" then
 			c[method] = function(self: any, previous: any, holder: any, ...: any): boolean
-				if self._error == nil and not holderWritable(holder) then
+				if self._error == nil and (type(holder) ~= "table" or isfrozen(holder) or (getmetatable(holder) ~= nil and rawget(holder, "value") == nil)) then
 					return self:_fail(SerializeError.ValueOutOfRange)
 				end
 				return family(name)[arm](self, previous, holder, ...)
 			end
 		elseif kind == "read" and method ~= "serializeBytes" then
 			c[method] = function(self: any, holder: any, ...: any): boolean
-				if self._error == nil and not holderWritable(holder) then
+				if self._error == nil and (type(holder) ~= "table" or isfrozen(holder) or (getmetatable(holder) ~= nil and rawget(holder, "value") == nil)) then
 					return self:_fail(SerializeError.ValueOutOfRange)
 				end
 				return family(name)[arm](self, holder, ...)
@@ -463,7 +459,7 @@ for _, row in FIXED do
 		if self._error ~= nil then
 			return false
 		end
-		if not holderWritable(holder) then
+		if type(holder) ~= "table" or isfrozen(holder) or (getmetatable(holder) ~= nil and rawget(holder, "value") == nil) then
 			return self:_fail(SerializeError.ValueOutOfRange)
 		end
 		if self._bits + width > self._numBits then
