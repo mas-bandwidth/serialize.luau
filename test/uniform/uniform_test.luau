@@ -369,7 +369,7 @@ function T.TestReadHolderChecked()
 		{ "serializeInt128", function(r: any, h: any) return r:serializeInt128(h, i128(0i, 0i), i128(100i, 0i)) end },
 		{ "serializeFixed64", function(r: any, h: any) return r:serializeFixed64(h, 4, 4, 0i, 1i) end },
 		{ "serializeFixed128", function(r: any, h: any) return r:serializeFixed128(h, 64, 64, 0i, 1i) end },
-		{ "serializeIntRelative", function(r: any, h: any) return r:serializeIntRelative(10, h) end },
+		{ "serializeIntRelative", function(r: any, h: any) return r:serializeIntRelative(10, h) end, 1 },
 		{ "serializeCompressedFloat", function(r: any, h: any) return r:serializeCompressedFloat(h, 0, 1, 0.1) end },
 		{ "serializeCompressedFloatPrecomputed", function(r: any, h: any) return r:serializeCompressedFloatPrecomputed(h, 255, 8, 1, 0) end },
 		{ "serializeString", function(r: any, h: any) return r:serializeString(h, 16) end },
@@ -403,8 +403,11 @@ function T.TestReadHolderChecked()
 	}
 	for _, read in reads do
 		local name, call = read[1], read[2]
+		-- the first data byte: bit 0 set makes an int_relative read a difference of 1
+		local first = read[3] or 0
 		for _, holder in refused do
 			local data = buffer.create(32)
+			buffer.writeu8(data, 0, first)
 			local r = serialize.ReadStream.new(data)
 			hooks = 0
 			local ok, result = pcall(call, r, holder[2]())
@@ -420,7 +423,9 @@ function T.TestReadHolderChecked()
 			check(ok2 and result2 == false and failed:error() == reasons.Rejected, what .. ": a failed stream did not keep its first reason")
 		end
 		for _, holder in accepted do
-			local r = serialize.ReadStream.new(buffer.create(32))
+			local data = buffer.create(32)
+			buffer.writeu8(data, 0, first)
+			local r = serialize.ReadStream.new(data)
 			hooks = 0
 			local h = holder[2]()
 			local what = name .. " into " .. holder[1]
