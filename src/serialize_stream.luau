@@ -296,18 +296,30 @@ local function class(kind: string): any
 		local method, name, arm = row[1], row[2], kind .. row[3]
 		local at = if kind == "read" then HOLDER_AT[method] or 1 else 0
 		if at == 1 then
+			local loaded: any = nil
 			c[method] = function(self: any, h: any, ...: any): boolean
 				if type(h) ~= "table" or table.isfrozen(h) or (getmetatable(h) ~= nil and rawget(h, "value") == nil) then
 					return self:_fail(SerializeError.ValueOutOfRange)
 				end
-				return family(name)[arm](self, h, ...)
+				local f = loaded
+				if f == nil then
+					f = family(name)[arm]
+					loaded = f
+				end
+				return f(self, h, ...)
 			end
 		elseif at == 2 then
+			local loaded: any = nil
 			c[method] = function(self: any, a: any, h: any, ...: any): boolean
 				if type(h) ~= "table" or table.isfrozen(h) or (getmetatable(h) ~= nil and rawget(h, "value") == nil) then
 					return self:_fail(SerializeError.ValueOutOfRange)
 				end
-				return family(name)[arm](self, a, h, ...)
+				local f = loaded
+				if f == nil then
+					f = family(name)[arm]
+					loaded = f
+				end
+				return f(self, a, h, ...)
 			end
 		else
 			c[method] = function(self: any, ...: any): boolean
@@ -468,6 +480,7 @@ local ReadStream = class("read")
 
 for _, row in FIXED do
 	local method, name, arm, width = row[1], row[2], "read" .. row[3], row[4]
+	local loaded: any = nil
 	ReadStream[method] = function(self: any, holder: any): boolean
 		if type(holder) ~= "table" or table.isfrozen(holder) or (getmetatable(holder) ~= nil and rawget(holder, "value") == nil) then
 			return self:_fail(SerializeError.ValueOutOfRange)
@@ -478,7 +491,12 @@ for _, row in FIXED do
 		if self._bits + width > self._numBits then
 			return self:_fail(SerializeError.PastEnd)
 		end
-		return family(name)[arm](self, holder)
+		local f = loaded
+		if f == nil then
+			f = family(name)[arm]
+			loaded = f
+		end
+		return f(self, holder)
 	end
 end
 
