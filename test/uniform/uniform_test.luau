@@ -544,9 +544,11 @@ function T.TestReadHolderChecked()
 		{ "fixed128", function(r: any, h: any): any
 			return r:serializeFixed128(h, 64, 64, 0i, 1i)
 		end },
+		-- a first bit of 1 is previous + 1: zero bits read the absolute tier,
+		-- whose 0 is not after previous
 		{ "int_relative", function(r: any, h: any): any
 			return r:serializeIntRelative(0, h)
-		end },
+		end, 1 },
 		{ "compressed float", function(r: any, h: any): any
 			return r:serializeCompressedFloat(h, 0, 1, 0.1)
 		end },
@@ -563,18 +565,24 @@ function T.TestReadHolderChecked()
 			return r:serializeString(h, 16)
 		end },
 	}
+	-- data is 32 bytes, zero but for its first byte
+	local function data(first: number?): buffer
+		local d = buffer.create(32)
+		buffer.writeu8(d, 0, first or 0)
+		return d
+	end
 	for _, read in reads do
 		local what, f = read[1], read[2]
 		for _, holder in bad do
 			local label = what .. " into " .. holder[1]
-			local r = serialize.ReadStream.new(buffer.create(32))
+			local r = serialize.ReadStream.new(data(read[3]))
 			local ok, result = pcall(f, r, holder[2]())
 			check(ok, label .. ": raised: " .. tostring(result))
 			check(result == false, label .. ": the read was accepted")
 			check(r:error() == OUT, label .. ": refused as " .. tostring(r:error()) .. ", not value_out_of_range")
 			check(r:bitsProcessed() == 0, label .. ": consumed " .. r:bitsProcessed() .. " bits")
 			check(calls == 0, label .. ": ran " .. calls .. " metamethods")
-			local again = serialize.ReadStream.new(buffer.create(32))
+			local again = serialize.ReadStream.new(data(read[3]))
 			again:reject()
 			local ok2, result2 = pcall(f, again, holder[2]())
 			check(ok2 and result2 == false, label .. ": a failed stream raised or accepted")
@@ -583,7 +591,7 @@ function T.TestReadHolderChecked()
 		end
 		for _, holder in good do
 			local label = what .. " into " .. holder[1]
-			local r = serialize.ReadStream.new(buffer.create(32))
+			local r = serialize.ReadStream.new(data(read[3]))
 			local h = holder[2]()
 			local ok, result = pcall(f, r, h)
 			check(ok, label .. ": raised: " .. tostring(result))
