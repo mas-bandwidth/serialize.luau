@@ -503,6 +503,12 @@ function T.TestReadHolderChecked()
 		{ "__index table", function(): any
 			return setmetatable({}, { __index = count })
 		end },
+		{ "metatable without __index or __newindex", function(): any
+			return setmetatable({}, { __tostring = count })
+		end },
+		{ "protected metatable without a raw field", function(): any
+			return setmetatable({}, { __metatable = "locked", __newindex = count })
+		end },
 	}
 	local good: { { any } } = {
 		{ "empty table", function(): any
