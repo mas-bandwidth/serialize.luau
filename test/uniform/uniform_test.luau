@@ -485,8 +485,17 @@ function T.TestReadHolderChecked()
 		{ "number", function(): any
 			return 5
 		end },
+		{ "boolean", function(): any
+			return false
+		end },
+		{ "string", function(): any
+			return "holder"
+		end },
 		{ "frozen table", function(): any
 			return table.freeze({ value = 0 })
+		end },
+		{ "frozen empty table", function(): any
+			return table.freeze({})
 		end },
 		{ "__newindex table", function(): any
 			return setmetatable({}, { __newindex = count })
@@ -564,6 +573,13 @@ function T.TestReadHolderChecked()
 		{ "string", function(r: any, h: any): any
 			return r:serializeString(h, 16)
 		end },
+		-- Continue wants a set sentinel bit; Until wants a clear one
+		{ "continue", function(r: any, h: any): any
+			return serialize.Continue(r, h)
+		end, 1 },
+		{ "until", function(r: any, h: any): any
+			return serialize.Until(r, h)
+		end },
 	}
 	-- data is 32 bytes, zero but for its first byte
 	local function data(first: number?): buffer
@@ -574,20 +590,25 @@ function T.TestReadHolderChecked()
 	for _, read in reads do
 		local what, f = read[1], read[2]
 		for _, holder in bad do
-			local label = what .. " into " .. holder[1]
-			local r = serialize.ReadStream.new(data(read[3]))
-			local ok, result = pcall(f, r, holder[2]())
-			check(ok, label .. ": raised: " .. tostring(result))
-			check(result == false, label .. ": the read was accepted")
-			check(r:error() == OUT, label .. ": refused as " .. tostring(r:error()) .. ", not value_out_of_range")
-			check(r:bitsProcessed() == 0, label .. ": consumed " .. r:bitsProcessed() .. " bits")
-			check(calls == 0, label .. ": ran " .. calls .. " metamethods")
-			local again = serialize.ReadStream.new(data(read[3]))
-			again:reject()
-			local ok2, result2 = pcall(f, again, holder[2]())
-			check(ok2 and result2 == false, label .. ": a failed stream raised or accepted")
-			check(again:error() == reasons.Rejected, label .. ": a failed stream did not keep its first reason")
-			check(calls == 0, label .. ": ran " .. calls .. " metamethods on a failed stream")
+			-- the holder is refused even when the field itself would run past
+			-- the end: an empty packet must refuse value_out_of_range, not
+			-- past_end, and must still consume nothing
+			for _, d in { data(read[3]), buffer.create(0) } do
+				local label = what .. " into " .. holder[1]
+				local r = serialize.ReadStream.new(d)
+				local ok, result = pcall(f, r, holder[2]())
+				check(ok, label .. ": raised: " .. tostring(result))
+				check(result == false, label .. ": the read was accepted")
+				check(r:error() == OUT, label .. ": refused as " .. tostring(r:error()) .. ", not value_out_of_range")
+				check(r:bitsProcessed() == 0, label .. ": consumed " .. r:bitsProcessed() .. " bits")
+				check(calls == 0, label .. ": ran " .. calls .. " metamethods")
+				local again = serialize.ReadStream.new(d)
+				again:reject()
+				local ok2, result2 = pcall(f, again, holder[2]())
+				check(ok2 and result2 == false, label .. ": a failed stream raised or accepted")
+				check(again:error() == reasons.Rejected, label .. ": a failed stream did not keep its first reason")
+				check(calls == 0, label .. ": ran " .. calls .. " metamethods on a failed stream")
+			end
 		end
 		for _, holder in good do
 			local label = what .. " into " .. holder[1]
