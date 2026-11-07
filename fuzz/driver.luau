@@ -349,12 +349,108 @@ local function resetProgram(prog, data)
 	return table.concat(states, ",") .. " " .. readProgram(prog, data, rs)
 end
 
+-- HOLDER_AT is the position of the holder among a read method's arguments.
+local HOLDER_AT: { [string]: number } = {
+	serializeBits = 1,
+	serializeBits64 = 1,
+	serializeBool = 1,
+	serializeUint8 = 1,
+	serializeUint16 = 1,
+	serializeUint32 = 1,
+	serializeUint64 = 1,
+	serializeUint128 = 1,
+	serializeInt = 1,
+	serializeInt64 = 1,
+	serializeInt128 = 1,
+	serializeFixed64 = 1,
+	serializeFixed128 = 1,
+	serializeIntRelative = 2,
+	serializeCompressedFloat = 1,
+	serializeCompressedFloatPrecomputed = 1,
+	serializeFloat = 1,
+	serializeDouble = 1,
+	serializeString = 1,
+}
+
+local HOLDER_OPS: { [string]: boolean } = {
+	b = true, b64 = true, bl = true, u8 = true, u16 = true, u32 = true, u64 = true,
+	i = true, i64 = true, i128 = true, u128 = true, fx = true, f128 = true,
+	cf = true, ir = true, f = true, d = true, s = true,
+}
+
+-- holderProgram reads a program with the holder of its k-th holder-taking step
+-- (k drawn from the program number) replaced by a holder that is not one, of
+-- the kind drawn from the program number. It reports the step replaced (0 when
+-- the program has none), the kind, the metamethods run and the trace.
+local function holderProgram(prog, data, number)
+	local calls = 0
+	local function count(): any
+		calls += 1
+		return 0
+	end
+	local kinds = {
+		function(): any
+			return nil
+		end,
+		function(): any
+			return 5
+		end,
+		function(): any
+			return table.freeze({ value = 0 })
+		end,
+		function(): any
+			return setmetatable({}, { __newindex = count })
+		end,
+		function(): any
+			return setmetatable({}, { __index = count })
+		end,
+	}
+	local steps = {}
+	for idx, st in ipairs(prog) do
+		if HOLDER_OPS[st.op] then
+			steps[#steps + 1] = idx
+		end
+	end
+	local kind = 1 + (number - 1) % #kinds
+	local k, step = 0, 0
+	if #steps > 0 then
+		k = 1 + (number - 1) % #steps
+		step = steps[k]
+	end
+	local rs = S.ReadStream.new(data)
+	local seen = 0
+	local proxy = setmetatable({}, {
+		__index = function(_, name)
+			local f = rs[name]
+			return function(_, ...)
+				local at = HOLDER_AT[name]
+				if at ~= nil then
+					seen += 1
+					if seen == k then
+						local args = table.pack(...)
+						args[at] = kinds[kind]()
+						return f(rs, table.unpack(args, 1, args.n))
+					end
+				end
+				return f(rs, ...)
+			end
+		end,
+	})
+	local ok, trace = pcall(readProgram, prog, data, proxy)
+	if not ok then
+		trace = "RAISED"
+	end
+	return tostring(step) .. " " .. tostring(kind) .. " " .. tostring(calls) .. " " .. trace
+end
+
 local input = require("./inputs")
 local lines = {}
 for ln in string.gmatch(input, "[^\n]+") do
 	lines[#lines + 1] = ln
 end
 local resetMode = lines[1] == "RESET"
+local holderMode = lines[1] == "HOLDER"
+local programNumber = 0
 
 local i = 1
 local n = #lines
@@ -398,6 +494,12 @@ while base <= n do
 		end
 		if resetMode then
 			print("X " .. resetProgram(prog, data))
+			base = cur
+			continue
+		end
+		if holderMode then
+			programNumber += 1
+			print("Y " .. holderProgram(prog, data, programNumber))
 			base = cur
 			continue
 		end

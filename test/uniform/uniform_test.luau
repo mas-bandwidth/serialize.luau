@@ -466,4 +466,133 @@ function T.TestReadInvalidBufferRefused()
 	end
 end
 
+-- Every public read that takes a holder checks it before any bit moves: nil, a
+-- number, a frozen table, a table whose store would reach __newindex and a
+-- table whose lookup would reach __index are refused as value_out_of_range,
+-- never a raise, with no bits consumed and no metamethod run, and a stream that
+-- already failed keeps its first reason. A plain empty table and a table whose
+-- `value` is a raw field (metatable or not) are still read into.
+function T.TestReadHolderChecked()
+	local calls = 0
+	local function count(): any
+		calls += 1
+		return 0
+	end
+	local bad: { { any } } = {
+		{ "nil", function(): any
+			return nil
+		end },
+		{ "number", function(): any
+			return 5
+		end },
+		{ "frozen table", function(): any
+			return table.freeze({ value = 0 })
+		end },
+		{ "__newindex table", function(): any
+			return setmetatable({}, { __newindex = count })
+		end },
+		{ "__index table", function(): any
+			return setmetatable({}, { __index = count })
+		end },
+	}
+	local good: { { any } } = {
+		{ "empty table", function(): any
+			return {}
+		end },
+		{ "raw-field table", function(): any
+			return setmetatable({ value = 0 }, { __newindex = count, __index = count })
+		end },
+	}
+	local maxInt, bits, delta = serialize.compressedFloatParams(0, 1, 0.1)
+	local reads: { { any } } = {
+		{ "bits", function(r: any, h: any): any
+			return r:serializeBits(h, 8)
+		end },
+		{ "bits64", function(r: any, h: any): any
+			return r:serializeBits64(h, 40)
+		end },
+		{ "bool", function(r: any, h: any): any
+			return r:serializeBool(h)
+		end },
+		{ "uint8", function(r: any, h: any): any
+			return r:serializeUint8(h)
+		end },
+		{ "uint16", function(r: any, h: any): any
+			return r:serializeUint16(h)
+		end },
+		{ "uint32", function(r: any, h: any): any
+			return r:serializeUint32(h)
+		end },
+		{ "uint64", function(r: any, h: any): any
+			return r:serializeUint64(h)
+		end },
+		{ "uint128", function(r: any, h: any): any
+			return r:serializeUint128(h)
+		end },
+		{ "int", function(r: any, h: any): any
+			return r:serializeInt(h, 0, 100)
+		end },
+		{ "int64", function(r: any, h: any): any
+			return r:serializeInt64(h, 0i, 100i)
+		end },
+		{ "int128", function(r: any, h: any): any
+			return r:serializeInt128(h, i128(0i, 0i), i128(100i, 0i))
+		end },
+		{ "fixed64", function(r: any, h: any): any
+			return r:serializeFixed64(h, 8, 8, 0i, 1i)
+		end },
+		{ "fixed128", function(r: any, h: any): any
+			return r:serializeFixed128(h, 64, 64, 0i, 1i)
+		end },
+		{ "int_relative", function(r: any, h: any): any
+			return r:serializeIntRelative(0, h)
+		end },
+		{ "compressed float", function(r: any, h: any): any
+			return r:serializeCompressedFloat(h, 0, 1, 0.1)
+		end },
+		{ "compressed float precomputed", function(r: any, h: any): any
+			return r:serializeCompressedFloatPrecomputed(h, maxInt, bits, delta, 0)
+		end },
+		{ "float", function(r: any, h: any): any
+			return r:serializeFloat(h)
+		end },
+		{ "double", function(r: any, h: any): any
+			return r:serializeDouble(h)
+		end },
+		{ "string", function(r: any, h: any): any
+			return r:serializeString(h, 16)
+		end },
+	}
+	for _, read in reads do
+		local what, f = read[1], read[2]
+		for _, holder in bad do
+			local label = what .. " into " .. holder[1]
+			local r = serialize.ReadStream.new(buffer.create(32))
+			local ok, result = pcall(f, r, holder[2]())
+			check(ok, label .. ": raised: " .. tostring(result))
+			check(result == false, label .. ": the read was accepted")
+			check(r:error() == OUT, label .. ": refused as " .. tostring(r:error()) .. ", not value_out_of_range")
+			check(r:bitsProcessed() == 0, label .. ": consumed " .. r:bitsProcessed() .. " bits")
+			check(calls == 0, label .. ": ran " .. calls .. " metamethods")
+			local again = serialize.ReadStream.new(buffer.create(32))
+			again:reject()
+			local ok2, result2 = pcall(f, again, holder[2]())
+			check(ok2 and result2 == false, label .. ": a failed stream raised or accepted")
+			check(again:error() == reasons.Rejected, label .. ": a failed stream did not keep its first reason")
+			check(calls == 0, label .. ": ran " .. calls .. " metamethods on a failed stream")
+		end
+		for _, holder in good do
+			local label = what .. " into " .. holder[1]
+			local r = serialize.ReadStream.new(buffer.create(32))
+			local h = holder[2]()
+			local ok, result = pcall(f, r, h)
+			check(ok, label .. ": raised: " .. tostring(result))
+			check(result == true, label .. ": refused " .. tostring(r:error()))
+			check(r:bitsProcessed() > 0, label .. ": consumed no bits")
+			check(rawget(h, "value") ~= nil, label .. ": the value was not stored")
+			check(calls == 0, label .. ": ran " .. calls .. " metamethods")
+		end
+	end
+end
+
 return T

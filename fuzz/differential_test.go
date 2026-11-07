@@ -1077,3 +1077,80 @@ func TestReadResetSeeds(t *testing.T) {
 		}
 	}
 }
+
+// holderOps are the read steps that store into a holder.
+var holderOps = map[string]bool{
+	"b": true, "b64": true, "bl": true, "u8": true, "u16": true, "u32": true, "u64": true,
+	"i": true, "i64": true, "i128": true, "u128": true, "fx": true, "f128": true,
+	"cf": true, "ir": true, "f": true, "d": true, "s": true,
+}
+
+// TestReadHolderSeeds reads each seeded program with the holder of one step
+// replaced by a holder that is not one (nil, a number, a frozen table, a table
+// with __newindex, a table with __index), the step and the kind drawn from the
+// program's number. The read must keep the serialize.go trace up to that step,
+// then refuse it as value_out_of_range: never a raise, and no metamethod run.
+// A program the serialize.go read refuses earlier keeps its trace whole.
+func TestReadHolderSeeds(t *testing.T) {
+	t.Parallel()
+	r := rand.New(rand.NewPCG(20261107, seedStream))
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot = filepath.Dir(repoRoot)
+	programs := genBatch(r, batchSize)
+	var lines []string
+	for _, l := range runBatch(t, repoRoot, "HOLDER\n"+buildBatchText(programs)) {
+		if strings.HasPrefix(l, "Y ") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != len(programs) {
+		t.Fatalf("driver gave %d lines for %d programs", len(lines), len(programs))
+	}
+	replaced := 0
+	for i, p := range programs {
+		fields := strings.SplitN(strings.TrimPrefix(lines[i], "Y "), " ", 4)
+		if len(fields) != 4 {
+			t.Fatalf("program %d: malformed line %q", i, lines[i])
+		}
+		var steps []int
+		for j, st := range p.steps {
+			if holderOps[st.op] {
+				steps = append(steps, j+1)
+			}
+		}
+		wantStep, wantKind := 0, 1+i%5
+		if len(steps) > 0 {
+			wantStep = steps[i%len(steps)]
+		}
+		if fields[0] != strconv.Itoa(wantStep) || fields[1] != strconv.Itoa(wantKind) {
+			t.Fatalf("program %d: driver replaced step %s kind %s, want step %d kind %d", i, fields[0], fields[1], wantStep, wantKind)
+		}
+		if fields[2] != "0" {
+			t.Errorf("program %d: holder kind %d ran %s metamethods", i, wantKind, fields[2])
+		}
+		goTrace := goRead(writeGoProgram(p), p)
+		want := goTrace
+		if wantStep > 0 {
+			toks := strings.Fields(goTrace)
+			refusedEarlier := false
+			for _, tok := range toks[:min(wantStep-1, len(toks))] {
+				if strings.HasPrefix(tok, "E:") {
+					refusedEarlier = true
+				}
+			}
+			if !refusedEarlier {
+				want = strings.Join(append(append([]string{}, toks[:wantStep-1]...), "E:value_out_of_range"), " ")
+				replaced++
+			}
+		}
+		if fields[3] != want {
+			t.Errorf("program %d: holder kind %d at step %d\n  want: %s\n  luau: %s", i, wantKind, wantStep, want, fields[3])
+		}
+	}
+	if replaced == 0 {
+		t.Error("no program reached its replaced holder")
+	}
+}
