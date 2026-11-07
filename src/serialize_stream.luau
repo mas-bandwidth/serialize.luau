@@ -253,8 +253,8 @@ local DISPATCH: { { string } } = {
 -- THE FIXED WIDTHS (DESIGN.md (h)): methods with no parameters whose width is
 -- the operation's own (STANDARD.md bits, bool, uint128, float, double). The
 -- write arm is the family's, whole. The READ gate is the stream's: refuse a
--- holder that is not one (holderOk, below), refuse on a latched stream,
--- refuse past the end (PastEnd), and only then call
+-- holder that is not one (THE READ HOLDER, below), refuse on a latched
+-- stream, refuse past the end (PastEnd), and only then call
 -- family.read<Suffix>(stream, holder), which reads exactly that many bits
 -- and stores the value. The MEASURE arm is the stream's alone: the width.
 local FIXED: { { any } } = {
@@ -275,10 +275,9 @@ local FIXED: { { any } } = {
 -- `value` is already a raw field, since storing to it runs no metamethod.
 -- Anything else (nil, a number, a frozen table, a table whose store would
 -- reach __newindex or whose lookup would reach __index) is refused
--- ValueOutOfRange through the one latch, invoking no metamethod.
-local function holderOk(h: any): boolean
-	return type(h) == "table" and not table.isfrozen(h) and (getmetatable(h) == nil or rawget(h, "value") ~= nil)
-end
+-- ValueOutOfRange through the one latch, invoking no metamethod. The check
+-- is written out at each read gate rather than called: this is the hot read
+-- path, and a call per field costs more than the test itself.
 
 -- HOLDER_AT is the position of the holder among a DISPATCH read method's
 -- arguments: 1 unless named here; 0 for a method that takes no holder.
@@ -298,14 +297,14 @@ local function class(kind: string): any
 		local at = if kind == "read" then HOLDER_AT[method] or 1 else 0
 		if at == 1 then
 			c[method] = function(self: any, h: any, ...: any): boolean
-				if not holderOk(h) then
+				if type(h) ~= "table" or table.isfrozen(h) or (getmetatable(h) ~= nil and rawget(h, "value") == nil) then
 					return self:_fail(SerializeError.ValueOutOfRange)
 				end
 				return family(name)[arm](self, h, ...)
 			end
 		elseif at == 2 then
 			c[method] = function(self: any, a: any, h: any, ...: any): boolean
-				if not holderOk(h) then
+				if type(h) ~= "table" or table.isfrozen(h) or (getmetatable(h) ~= nil and rawget(h, "value") == nil) then
 					return self:_fail(SerializeError.ValueOutOfRange)
 				end
 				return family(name)[arm](self, a, h, ...)
@@ -470,7 +469,7 @@ local ReadStream = class("read")
 for _, row in FIXED do
 	local method, name, arm, width = row[1], row[2], "read" .. row[3], row[4]
 	ReadStream[method] = function(self: any, holder: any): boolean
-		if not holderOk(holder) then
+		if type(holder) ~= "table" or table.isfrozen(holder) or (getmetatable(holder) ~= nil and rawget(holder, "value") == nil) then
 			return self:_fail(SerializeError.ValueOutOfRange)
 		end
 		if self._error ~= nil then
