@@ -356,15 +356,23 @@ function T.TestU15CompressedFloatParamsTrapsNonFinite()
 	check(mi == 1000 and bits == 10, "compressedFloatParams(0, 10, 0.01)")
 end
 
--- The read side is untouched by the declaration rulings: a reader with a
--- non-finite compressed_float declaration never traps (U7; the corpus header
--- of compressed_float.txt: "the read path is untouched").
+-- U7: a reader with a declaration whose float32 delta or delta / resolution
+-- is not finite never traps; it refuses value_out_of_range, unwritten and
+-- before any bit moves.
 function T.TestU7ReadWithNonFiniteDeclarationNeverTraps()
-	local r = serialize.ReadStream.new(buffer.create(8))
-	local ok, result = pcall(function()
-		return r:serializeCompressedFloat({ value = 0 }, 0, 1e38, 1e-38)
-	end)
-	check(ok, "the read trapped: " .. tostring(result))
+	for _, d in { { 0, 1e30, 1e-30 }, { -3e38, 3e38, 1 } } do
+		local what = "read declaration (" .. d[1] .. ", " .. d[2] .. ", " .. d[3] .. ")"
+		local r = serialize.ReadStream.new(buffer.create(8))
+		local h: any = { value = 99 }
+		local ok, result = pcall(function()
+			return r:serializeCompressedFloat(h, d[1], d[2], d[3])
+		end)
+		check(ok, what .. ": the read trapped: " .. tostring(result))
+		check(result == false, what .. ": the read was accepted")
+		check(r:error() == serialize.SerializeError.ValueOutOfRange, what .. ": refused as " .. tostring(r:error()) .. ", not value_out_of_range")
+		check(r:bitsProcessed() == 0, what .. ": consumed " .. r:bitsProcessed() .. " bits")
+		check(h.value == 99, what .. ": wrote its holder")
+	end
 end
 
 -- Module hygiene: no src module assigns a global. A module's globals live in
