@@ -319,7 +319,9 @@ function WriteStream.reset(self: any, buf: buffer)
 	self._data = buf
 	self._numBits = n * 8
 	self._bits = 0
-	self._packer = nil
+	if self._packer ~= nil then
+		self._packer:reset(buf)
+	end
 	self._error = nil
 end
 
@@ -457,7 +459,9 @@ function ReadStream.reset(self: any, data: buffer)
 	self._data = data
 	self._numBits = buffer.len(data) * 8
 	self._bits = 0
-	self._packer = nil
+	if self._packer ~= nil then
+		self._packer:reset(data)
+	end
 	self._error = nil
 end
 
