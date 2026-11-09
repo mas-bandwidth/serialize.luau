@@ -23,7 +23,8 @@
 -- writer and the measure trap on a declaration whose delta or delta / res is
 -- not finite in float32, or whose top integer decodes past FLT_MAX (min +
 -- delta, rounded once in float32), as the reference asserts (IMPLEMENTING.md,
--- "The check model"); only write and measure check these, never the reader.
+-- "The check model"); the reader refuses the non-finite delta or delta / res
+-- before any bit moves and refuses a non-finite decode at runtime.
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 
@@ -58,9 +59,9 @@ end
 -- (serialize.go stream.go CompressedFloatParams; STANDARD.md compressed_float),
 -- unchecked: the caller has refused min >= max and resolution <= 0. Each
 -- parameter is narrowed to float32 on entry, as Go's float32 parameters are
--- (DESIGN.md (e)). A non-finite delta or delta / res is clamped here, which
--- is what the read path keeps (the corpus header of compressed_float.txt:
--- "the read path is untouched"); the write and measure arms trap on it first.
+-- (DESIGN.md (e)). A non-finite delta or delta / res is clamped here; the
+-- write and measure arms trap on it first, and the read arm refuses it before
+-- it gets here.
 local function params(min: number, max: number, resolution: number): (number, number, number)
 	min = fround(min)
 	max = fround(max)
@@ -94,8 +95,9 @@ end
 -- declaration (IMPLEMENTING.md, "The check model"): paramsMisuse, then a
 -- delta and a delta / res that are finite in float32, then a top decode
 -- min + delta that is finite in float32. It returns the rule broken, or nil.
--- Write and measure trap on it (U9, U6); the read path keeps paramsMisuse
--- alone (U16), and refuses a non-finite decode at runtime.
+-- Write and measure trap on it (U9, U6); the read path checks the same params
+-- and delta rules and refuses them as misuse, then refuses a non-finite
+-- decode at runtime.
 local function declarationMisuse(min: any, max: any, resolution: any): string?
 	local bad = paramsMisuse(min, max, resolution)
 	if bad ~= nil then
@@ -259,6 +261,12 @@ end
 
 function M.readCompressedFloat(s: any, h: any, min: number, max: number, resolution: number): boolean
 	local bad = paramsMisuse(min, max, resolution)
+	if bad == nil then
+		local delta = fround(fround(max) - fround(min))
+		if not isFinite(delta) or not isFinite(fround(delta / fround(resolution))) then
+			bad = RAISE_DECLARATION
+		end
+	end
 	if bad ~= nil then
 		return s:_misuse(bad)
 	end
