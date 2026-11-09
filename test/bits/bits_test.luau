@@ -428,6 +428,35 @@ local function testMeasure()
 	end
 end
 
+local function raisesBool(f: () -> ())
+	local ok, err = pcall(f)
+	if ok then
+		fail("serializeBool with a non-boolean value did not raise")
+	end
+	if string.find(tostring(err), "serialize: serializeBool value must be a boolean", 1, true) == nil then
+		fail("serializeBool raise was " .. tostring(err))
+	end
+end
+
+local function testBoolBooleanValue()
+	for _, h in { { value = 0 }, {} } do
+		local w = serialize.WriteStream.new(buffer.create(16))
+		raisesBool(function()
+			w:serializeBool(h)
+		end)
+		if w:bitsProcessed() ~= 0 then
+			fail("serializeBool with a non-boolean value wrote bits")
+		end
+		local m = serialize.MeasureStream.new()
+		raisesBool(function()
+			m:serializeBool(h)
+		end)
+		if m:bitsProcessed() ~= 0 then
+			fail("serializeBool with a non-boolean value measured bits")
+		end
+	end
+end
+
 function T.TestSerializeBits()
 	runFile("bits")
 	runFile("bool")
@@ -435,6 +464,7 @@ function T.TestSerializeBits()
 	testContinue()
 	testUntil()
 	testMeasure()
+	testBoolBooleanValue()
 end
 
 return T

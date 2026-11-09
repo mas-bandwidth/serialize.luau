@@ -39,6 +39,7 @@ local RAISE_INTEGER_UINT64 = "serialize: serializeUint64 value must be an intege
 local RAISE_UINT8 = "serialize: serializeUint8 value must be an integer in [0,2^8)"
 local RAISE_UINT16 = "serialize: serializeUint16 value must be an integer in [0,2^16)"
 local RAISE_UINT32 = "serialize: serializeUint32 value must be an integer in [0,2^32)"
+local RAISE_BOOL = "serialize: serializeBool value must be a boolean"
 
 -- POW2[n] is 2^n for n in [1,32], the exclusive top of an n-bit value.
 local POW2: { number } = {}
@@ -167,6 +168,9 @@ end
 -- last.
 
 function M.writeBool(s: any, h: any): boolean
+	if type(h.value) ~= "boolean" then
+		return s:_misuse(RAISE_BOOL)
+	end
 	if s:_latched() then
 		return false
 	end
