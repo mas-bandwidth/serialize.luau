@@ -29,9 +29,8 @@ which diffs them against the tag's own copies. CI's corpus job diffs all
 four against the pin on every run. None is edited here; a change arrives by
 re-vendoring from a new tag or commit.
 
-**The pin.** Luau 0.741, the same pin as schema's Luau leg (schema
-`docs/PORT-LUAU.md`, branch `sprint/schema-luau-port-design.w1.g1.e21`,
-`448797ed5e8721783a570a47dd0dde02889624c3`): `make dist-luau`, (i).
+**The pin.** Luau 0.741, the same pin as the companion Luau port (its design
+notes, commit `448797ed5e8721783a570a47dd0dde02889624c3`): `make dist-luau`, (i).
 
 ## (a) THE API
 
@@ -282,8 +281,8 @@ The rules for this library:
 
 ## (c) THE NUMBER MODEL
 
-Restated from schema docs/PORT-LUAU.md, 64-BIT AND 128-BIT INTEGERS, with no
-change of substance:
+Restated from the companion Luau port's design notes, 64-BIT AND 128-BIT
+INTEGERS, with no change of substance:
 
 - Luau numbers are doubles. A value of 32 bits or fewer (bits, int, uint8,
   uint16, uint32, int_relative, a quantized compressed float, a length) is a
@@ -309,7 +308,7 @@ change of substance:
 
 ## (d) BYTES
 
-Restated from schema docs/PORT-LUAU.md, BYTE BUFFERS: bytes are Luau's
+Restated from the companion Luau port's design notes, BYTE BUFFERS: bytes are Luau's
 `buffer`, fixed-size, mutable, 0-based, little-endian by definition. The
 library uses `buffer.create`, `len`, `readu8 ... readu32`, `writeu8 ... writeu32`, `readinteger`/`writeinteger` (the 64-bit words), `readf32`,
 `readf64`, `writef32`, `writef64`, `copy`, `fill`, `readstring`/`writestring`
@@ -320,8 +319,8 @@ bytes: `#s` is its byte length; a string holder moves through
 
 ## (e) FLOAT32
 
-Restated from schema docs/PORT-LUAU.md, BYTE BUFFERS (the coordinator's
-float32 ruling, 2026-10-17):
+Restated from the companion Luau port's design notes, BYTE BUFFERS (the
+coordinator's float32 ruling, 2026-10-17):
 
 - Floats are FINITE (STANDARD.md, "Finite values only, every one bit
   exact"): a pattern whose exponent field is all ones (NaN with any payload,
@@ -362,8 +361,8 @@ float32 ruling, 2026-10-17):
 
 ## (f) LOADING
 
-Restated from schema docs/PORT-LUAU.md, THE RUNTIME LAYOUT, the Security
-paragraph:
+Restated from the companion Luau port's design notes, THE RUNTIME LAYOUT, the
+Security paragraph:
 
 - The unit directory REPLACES the module search path; it is never prepended
   to it. Luau's `require` has no search path: a bare name is refused by the
@@ -380,9 +379,9 @@ paragraph:
   because luau-analyze refuses a require it cannot resolve, and a family file
   is absent until its card lands.
 - No native modules load: the pinned interpreter has no `package`, `dofile`,
-  `loadfile` or `io` and no C module loader. An embedding host (Virtual Go, the
-  space game, lego) resolves `./` against the unit directory alone and refuses
-  everything else.
+  `loadfile` or `io` and no C module loader. An embedding host (a game engine,
+  an application runtime, or a scripting host) resolves `./` against the unit
+  directory alone and refuses everything else.
 - test/smoke holds it: a shadowing `serialize_stream.luau` planted in the
   working directory, one level above the unit, raises if loaded; the entry
   loads its own, and the control requires the shadow through `../` and sees it

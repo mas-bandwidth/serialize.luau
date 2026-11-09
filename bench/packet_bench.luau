@@ -7,8 +7,9 @@
 -- printed so two builds can be proved to emit identical bytes.
 --
 -- usage: luau bench/packet_bench.luau [packets] [rounds]
--- Run it on a fleet bench, pinned to one core, runs interleaved between the
--- builds being compared (never the studio, never the host space).
+-- Run it on a dedicated bench host, pinned to one core, runs interleaved
+-- between the builds being compared (never a shared development machine,
+-- never the machine under test).
 
 local serialize = require("../src/serialize")
 
