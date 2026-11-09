@@ -157,10 +157,10 @@ local function mul(a: any, b: any): any
 end
 
 local function divMod(a: any, b: any): (any, any)
-	if a.hi == ZERO and a.lo == ZERO then
-		return new(ZERO, ZERO), new(ZERO, ZERO)
-	end
 	if b.hi == ZERO and b.lo == ZERO then
+		error("serialize: division by zero", 2)
+	end
+	if a.hi == ZERO and a.lo == ZERO then
 		return new(ZERO, ZERO), new(ZERO, ZERO)
 	end
 	local quotient = new(ZERO, ZERO)
@@ -178,15 +178,24 @@ local function divMod(a: any, b: any): (any, any)
 	return quotient, remainder
 end
 
--- The shared constructors and operations. Int128 compares signed, Uint128
--- compares unsigned; every other operation is on the bit pattern.
+-- Signed division uses unsigned magnitudes, then restores the quotient and
+-- dividend remainder signs. Negation wraps, including MIN / -1.
+local function divModSigned(a: any, b: any): (any, any)
+	local negativeA = integer.lt(a.hi, ZERO)
+	local negativeB = integer.lt(b.hi, ZERO)
+	local q, r = divMod(if negativeA then neg(a) else a, if negativeB then neg(b) else b)
+	return if negativeA ~= negativeB then neg(q) else q, if negativeA then neg(r) else r
+end
+
+-- The shared constructors and operations. Comparison and division select
+-- signed or unsigned interpretation; the other operations use the bit pattern.
 
 local function from64(x: integer): any
 	local hi = if integer.lt(x, ZERO) then 0xffffffffffffffffi else ZERO
 	return new(x, hi)
 end
 
-local function attach(cls: any, compare: (any, any) -> number)
+local function attach(cls: any, compare: (any, any) -> number, divide: (any, any) -> (any, any))
 	cls.new = new
 	cls.from64 = from64
 	cls.int64 = function(x: any): integer
@@ -212,13 +221,13 @@ local function attach(cls: any, compare: (any, any) -> number)
 	cls.add = add
 	cls.sub = sub
 	cls.mul = mul
-	cls.divMod = divMod
+	cls.divMod = divide
 	cls.div = function(a: any, b: any): any
-		local q = divMod(a, b)
+		local q = divide(a, b)
 		return q
 	end
 	cls.mod = function(a: any, b: any): any
-		local _, r = divMod(a, b)
+		local _, r = divide(a, b)
 		return r
 	end
 	cls.neg = neg
@@ -230,8 +239,8 @@ local function attach(cls: any, compare: (any, any) -> number)
 	cls.rsh = rsh
 end
 
-attach(Int128, cmpSigned)
-attach(Uint128, cmpUnsigned)
+attach(Int128, cmpSigned, divModSigned)
+attach(Uint128, cmpUnsigned, divMod)
 
 -- bitsRequired128 is serialize.go BitsRequired128: the span in the unsigned
 -- domain, so ranges wider than 2^127 are exact (STANDARD.md, int128).

@@ -184,6 +184,11 @@ Deviations from serialize.js's spelling, each with its reason:
   operators, and the bitwise ones are spelled `band`, `bor`, `bxor`, `bnot`,
   because `and`, `or` and `not` are Luau keywords (the `integer` library's
   own names): `from64, int64, uint64, int128, uint128, isZero, isNegative, len, cmp, add, sub, mul, divMod, div, mod, neg, bnot, band, bor, bxor, lsh, rsh`, plus `new(lo, hi)`. Every operation returns a fresh pair.
+  `Int128.divMod`, `div`, and `mod` divide signed values, truncating the
+  quotient toward zero; the remainder has the dividend's sign. `Uint128`
+  division is unsigned. Both classes raise on a zero divisor, including
+  zero divided by zero. Arithmetic wraps modulo 2^128, so Int128 MIN / -1
+  returns MIN with a zero remainder.
 
 **Write misuse traps (IMPLEMENTING.md U9, standard 2.1.1).** This port has one
 write-misuse mechanism, the trap, and its trap is a raised Luau error
