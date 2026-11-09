@@ -313,6 +313,37 @@ local function testBytesApis()
 	end, "requires byte alignment")
 end
 
+-- A flush ends the write: writeBits and writeBytes after flushBits raise the
+-- writer's misuse error before any bit moves, on a 16-byte and an 8-byte
+-- buffer.
+local function testWriteAfterFlush()
+	for _, size in { 16, 8 } do
+		local w = BitWriter.new(buffer.create(size))
+		w:writeBits(0xAB, 8)
+		w:flushBits()
+		raises(function()
+			w:writeBits(0xCD, 8)
+		end, "cannot write after flush")
+		if w:bitsWritten() ~= 8 then
+			error("writeBits after flush moved bits on a " .. size .. "-byte buffer", 2)
+		end
+		writeBufferEquals(w:data(), { 0xAB })
+	end
+	local src = bytesToBuffer({ 0xCD })
+	for _, size in { 16, 8 } do
+		local w = BitWriter.new(buffer.create(size))
+		w:writeBits(0xAB, 8)
+		w:flushBits()
+		raises(function()
+			w:writeBytes(src)
+		end, "cannot write after flush")
+		if w:bitsWritten() ~= 8 then
+			error("writeBytes after flush moved bits on a " .. size .. "-byte buffer", 2)
+		end
+		writeBufferEquals(w:data(), { 0xAB })
+	end
+end
+
 -- The misuse raises the brief names, each with serialize.go's panic text.
 local function testMisuse()
 	raises(function()
@@ -361,6 +392,7 @@ function T.TestBitpacker()
 	testPastEndAndShortData()
 	testReadAlignRefuse()
 	testBytesApis()
+	testWriteAfterFlush()
 	testMisuse()
 end
 

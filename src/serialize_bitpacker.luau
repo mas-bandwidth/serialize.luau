@@ -29,6 +29,7 @@ local RAISE_READ_OVERFLOW = "serialize: bit reader would read past the end of th
 local RAISE_NOT_ALIGNED = "serialize: byte array serialization requires byte alignment"
 local RAISE_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple of 8 bytes"
 local RAISE_READ_DST = "serialize: bit reader destination buffer too small"
+local RAISE_WRITE_AFTER_FLUSH = "serialize: cannot write after flush"
 
 -- ---------------------------------------------------------------------------
 -- BitWriter (serialize.go bitpacker.go; STANDARD.md bits, align, bytes,
@@ -84,6 +85,9 @@ function BitWriter.writeBits(self: any, value: number, bits: number)
 	if bits < 1 or bits > 32 then
 		error(RAISE_BITS_RANGE, 2)
 	end
+	if self._scratchBits ~= self._bitsWritten % 64 then
+		error(RAISE_WRITE_AFTER_FLUSH, 2)
+	end
 	if self._bitsWritten + bits > self._numBits then
 		error(RAISE_WRITE_OVERFLOW, 2)
 	end
@@ -106,6 +110,9 @@ end
 function BitWriter.writeBytes(self: any, src: buffer, offset: number?, count: number?)
 	local off = offset or 0
 	local cnt = count or buffer.len(src)
+	if self._scratchBits ~= self._bitsWritten % 64 then
+		error(RAISE_WRITE_AFTER_FLUSH, 2)
+	end
 	if self._bitsWritten % 8 ~= 0 then
 		error(RAISE_NOT_ALIGNED, 2)
 	end

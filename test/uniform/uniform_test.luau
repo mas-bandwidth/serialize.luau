@@ -210,6 +210,31 @@ function T.TestU9FailOnWriteAndMeasure()
 	check(m:ok(), "measure fail recorded " .. tostring(m:error()))
 end
 
+-- U9: a flush ends the write; serializeBits and serializeBytes after flush
+-- raise the writer's misuse error before any bit moves, on a 16-byte and an
+-- 8-byte buffer.
+function T.TestU9WriteAfterFlush()
+	local src = buffer.create(1)
+	buffer.writeu8(src, 0, 0xCD)
+	for _, size in { 16, 8 } do
+		local w = serialize.WriteStream.new(buffer.create(size))
+		check(w:serializeBits({ value = 0xAB }, 8), "the first 8 bits")
+		w:flush()
+		raises(function()
+			return w:serializeBits({ value = 0xCD }, 8)
+		end, "cannot write after flush")
+		check(w:bitsProcessed() == 8, "serializeBits after flush moved bits on a " .. size .. "-byte buffer")
+
+		local b = serialize.WriteStream.new(buffer.create(size))
+		check(b:serializeBits({ value = 0xAB }, 8), "the first 8 bits")
+		b:flush()
+		raises(function()
+			return b:serializeBytes(src)
+		end, "cannot write after flush")
+		check(b:bitsProcessed() == 8, "serializeBytes after flush moved bits on a " .. size .. "-byte buffer")
+	end
+end
+
 -- U12: end on a write or a measure is a no-op returning true.
 function T.TestU12EndOnWriteAndMeasure()
 	local w = serialize.WriteStream.new(buffer.create(8))
