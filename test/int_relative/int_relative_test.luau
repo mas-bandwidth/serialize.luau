@@ -62,7 +62,7 @@ local function parse(text: string): ({ Record }, number)
 			check(current.operation == "int_relative", "record " .. tostring(current.name) .. " operation")
 			check(current.previous ~= nil, "record " .. tostring(current.name) .. " previous")
 			check(current.expect ~= nil, "record " .. tostring(current.name) .. " expect")
-			local kind, value, hexbits = string.match(current.expect, "^(%S+)%s*=?%s*(.*)$")
+			local kind, value: any = string.match(current.expect, "^(%S+)%s*=?%s*(.*)$")
 			local rec: Record = {
 				name = current.name or "?",
 				previous = current.previous,
@@ -97,9 +97,9 @@ local function parse(text: string): ({ Record }, number)
 			if string.match(line, "^operation%f[%s]") then
 				expected += 1
 			end
-			local key, value = string.match(line, "^(%S+)%s*(.*)$")
+			local key, value: any = string.match(line, "^(%S+)%s*(.*)$")
 			if key == "param" then
-				local pname, pval = string.match(value, "^(%S+)%s*=%s*(%S+)$")
+				local pname, pval: any = string.match(value, "^(%S+)%s*=%s*(%S+)$")
 				check(pname == "previous", "only the previous parameter is used: " .. line)
 				current = current or {}
 				current.previous = parseValue(pval)
@@ -119,7 +119,7 @@ end
 local function bytesOf(hex: string): buffer
 	local chars = {}
 	for i = 1, #hex, 2 do
-		table.insert(chars, string.char(tonumber(string.sub(hex, i, i + 1), 16)))
+		table.insert(chars, string.char(tonumber(string.sub(hex, i, i + 1), 16) :: number))
 	end
 	return buffer.fromstring(table.concat(chars))
 end
@@ -171,7 +171,7 @@ local function runRecords()
 				check(reader:bitsProcessed() == rec.consumed, rec.name .. ": consumed " .. reader:bitsProcessed())
 			end
 			if rec.writer then
-				local written, w = writeCurrent(rec.previous, rec.value)
+				local written, w = writeCurrent(rec.previous, rec.value :: number)
 				check(hexString(written) == rec.bytes, rec.name .. ": writer bytes " .. hexString(written) .. ", want " .. rec.bytes)
 				check(w:bitsProcessed() == rec.consumed, rec.name .. ": writer bits " .. w:bitsProcessed())
 				local m = serialize.MeasureStream.new()

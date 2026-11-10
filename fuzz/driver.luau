@@ -26,7 +26,7 @@ local function hexToBuf(h)
 	local n = #h // 2
 	local buf = buffer.create(n)
 	for i = 0, n - 1 do
-		buffer.writeu8(buf, i, tonumber(string.sub(h, i * 2 + 1, i * 2 + 2), 16))
+		buffer.writeu8(buf, i, tonumber(string.sub(h, i * 2 + 1, i * 2 + 2), 16) :: number)
 	end
 	return buf
 end
@@ -83,11 +83,11 @@ local function i32(u)
 	return u
 end
 
-local function applyMutation(data, tokens)
+local function applyMutation(data: buffer, tokens: { string }): buffer
 	local kind = tokens[1]
 	if kind == "F" then
-		local bi = tonumber(tokens[2])
-		local bit = tonumber(tokens[3])
+		local bi = tonumber(tokens[2]) :: number
+		local bit = tonumber(tokens[3]) :: number
 		local buf = buffer.create(buffer.len(data))
 		buffer.copy(buf, 0, data, 0, buffer.len(data))
 		if bi < buffer.len(buf) then
@@ -96,7 +96,7 @@ local function applyMutation(data, tokens)
 		end
 		return buf
 	elseif kind == "T" then
-		local k = tonumber(tokens[2])
+		local k = tonumber(tokens[2]) :: number
 		if k > buffer.len(data) then
 			k = buffer.len(data)
 		end
@@ -104,7 +104,7 @@ local function applyMutation(data, tokens)
 		buffer.copy(buf, 0, data, 0, k)
 		return buf
 	else
-		local n = tonumber(tokens[2])
+		local n = tonumber(tokens[2]) :: number
 		local buf = buffer.create(buffer.len(data) + n)
 		buffer.copy(buf, 0, data, 0, buffer.len(data))
 		for i = 0, n - 1 do
@@ -114,22 +114,22 @@ local function applyMutation(data, tokens)
 	end
 end
 
-local function parseProgram(lines)
-	local prog = {}
+local function parseProgram(lines: { string }): { [any]: any }
+	local prog: { [any]: any } = {}
 	for _, ln in ipairs(lines) do
-		local tokens = {}
+		local tokens: { string } = {}
 		for tok in string.gmatch(ln, "%S+") do
 			tokens[#tokens + 1] = tok
 		end
 		local op = tokens[1]
-		local words = {}
+		local words: { number } = {}
 		for k = 2, #tokens do
 			local t = tonumber(tokens[k])
 			if t then
 				words[#words + 1] = t
 			end
 		end
-		local st = { op = op, words = words }
+		local st: { [any]: any } = { op = op, words = words }
 		if op == "b" or op == "b64" then
 			st.bits = words[#words]
 		end
@@ -145,7 +145,7 @@ local function parseProgram(lines)
 	return prog
 end
 
-local function writeProgram(prog)
+local function writeProgram(prog: { [any]: any })
 	local buf = buffer.create(BUFSIZE)
 	local ws = S.WriteStream.new(buf)
 	for _, st in ipairs(prog) do
@@ -206,7 +206,7 @@ local function writeProgram(prog)
 	return ws:data(), nil
 end
 
-local function readProgram(prog, data)
+local function readProgram(prog: { [any]: any }, data: buffer)
 	local rs = S.ReadStream.new(data)
 	local toks = {}
 	for _, st in ipairs(prog) do
@@ -330,7 +330,6 @@ for ln in string.gmatch(input, "[^\n]+") do
 	lines[#lines + 1] = ln
 end
 
-local i = 1
 local n = #lines
 local base = 1
 while base <= n do

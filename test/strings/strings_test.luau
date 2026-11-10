@@ -82,14 +82,14 @@ end
 -- Records (STANDARD.md, The vector format).
 local function parseRecords(text: string): { any }
 	local records = {}
-	local current = {}
+	local current: { string } = {}
 	local function flush()
 		if #current == 0 then
 			return
 		end
 		local rec: any = { params = {}, bytes = "", writer = false }
 		for _, line in ipairs(current) do
-			local key, rest = string.match(line, "^(%S+)%s*(.*)$")
+			local key, rest: any = string.match(line, "^(%S+)%s*(.*)$")
 			if key == "operation" then
 				rec.operation = rest
 			elseif key == "name" then

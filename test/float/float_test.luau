@@ -133,7 +133,7 @@ local function parseRecords(text: string): { any }
 					rec.name = rest
 				elseif key == "bytes" then
 					rec.bytes = {}
-					for h in string.gmatch(rest, "%x%x") do
+					for h in string.gmatch(rest :: string, "%x%x") do
 						table.insert(rec.bytes, tonumber(h, 16))
 					end
 				elseif key == "expect" then

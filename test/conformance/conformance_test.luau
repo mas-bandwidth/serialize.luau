@@ -132,7 +132,7 @@ local function parseVecFile(text: string): { any }
 			if v ~= nil then cur.name = v end
 			local pk, pv = trimmed:match("^param ([%w_]+) = (.+)$")
 			if pk == "step" then
-				cur.steps[#cur.steps + 1] = parseStep(pv)
+				cur.steps[#cur.steps + 1] = parseStep(pv :: string)
 			elseif pk ~= nil then
 				cur.params[pk] = pv
 			end
@@ -421,10 +421,6 @@ local function runRange(r: any, rec: any, kind: string)
 		w:flush()
 		check(sameBytes(rec.bytes, w:data()), rec.name .. ": " .. kind .. " writer bytes mismatch")
 	end
-end
-
-local function runInt128(r: any, rec: any)
-	runRange(r, rec, "int128")
 end
 
 local function runUint128(r: any, rec: any)
@@ -720,7 +716,7 @@ end
 -- Sequence steps (sequence.txt, object.txt, message.txt; STANDARD.md The
 -- vector format, A sequence vector).
 
-local function parseOneStep(r: any, st: { string }, out: { any }): boolean
+local function parseOneStep(r: any, st: { [any]: any }, out: { any }): boolean
 	local op = st[1]
 	local dec = st.decoded
 	if op == "bits" then
@@ -886,7 +882,7 @@ end
 -- refusal to be terminal, so after the first failing step every later step
 -- must also fail, consume no bits, and leave its destination untouched — the
 -- runner must check that by behavior, not by an accessor.
-local function runSteps(r: any, steps: { { string } }, out: { any }, poison: boolean): boolean
+local function runSteps(r: any, steps: { [any]: any }, out: { any }, poison: boolean): boolean
 	local i = 1
 	local failed = false
 	local bitsAtFailure = 0
@@ -1116,7 +1112,7 @@ local function checkCallbackRefusal(rec: any)
 	check(r:error() == "rejected",
 		rec.name .. ": a callback-only object refusal latched " .. tostring(r:error()) .. ", not rejected")
 	local called = false
-	local after = { serialize = function(_: any, _s: any): boolean called = true return true end }
+	local after = { serialize = function(_: any, _s: any): boolean called = true; return true end }
 	check(not r:serializeObject(after) and not called,
 		rec.name .. ": a nested object ran or was accepted after a callback-only refusal")
 	checkTerminal(r, "bits", {})

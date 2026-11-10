@@ -15,7 +15,7 @@ local T = {}
 -- The closed list of refusal reasons (STANDARD.md, Refusal reasons), as the
 -- library spells them; test/smoke pins each spelling.
 local REASONS: { [string]: boolean } = {}
-for _, reason in serialize.SerializeError do
+for _, reason in (serialize.SerializeError :: any) do
 	REASONS[reason] = true
 end
 
@@ -29,7 +29,7 @@ end
 local function splitHex(s: string): { number }
 	local out = {}
 	for pair in s:gmatch("%x%x") do
-		table.insert(out, tonumber("0x" .. pair))
+		table.insert(out, tonumber("0x" .. pair) :: number)
 	end
 	return out
 end
@@ -137,7 +137,7 @@ local function decToInt(s: string): integer
 	local hi = 0
 	local lo = 0
 	for i = 1, #s do
-		local d = tonumber(s:sub(i, i))
+		local d = tonumber(s:sub(i, i)) :: number
 		local v = lo * 10 + d
 		local carry = math.floor(v / 4294967296)
 		lo = v % 4294967296
@@ -158,10 +158,11 @@ end
 -- The bits record: read and, when canonical, write.
 
 local function runBits(r: any, rec: any)
-	local bits = tonumber(rec.params.bits)
-	if bits == nil then
+	local parsed = tonumber(rec.params.bits)
+	if parsed == nil then
 		fail("bits record without a bits param: " .. rec.name)
 	end
+	local bits = parsed :: number
 
 	local function readOp(h: any): boolean
 		if bits <= 32 then

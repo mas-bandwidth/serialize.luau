@@ -84,9 +84,9 @@ end
 
 local function parseRecords(text: string): { any }
 	local records = {}
-	local current = nil
+	local current: any = nil
 	for line in (text .. "\n"):gmatch("(.-)\n") do
-		local trimmed = line:match("^%s*(.-)%s*$")
+		local trimmed = line:match("^%s*(.-)%s*$") :: string
 		if trimmed == "" then
 			current = nil
 		elseif trimmed:sub(1, 1) ~= "#" then
@@ -94,7 +94,7 @@ local function parseRecords(text: string): { any }
 				current = {}
 				records[#records + 1] = current
 			end
-			local key, val = trimmed:match("^(%S+)%s+(.+)$")
+			local key, val: any = trimmed:match("^(%S+)%s+(.+)$")
 			if key == nil then
 				key = trimmed
 				val = ""
