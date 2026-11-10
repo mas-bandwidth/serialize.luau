@@ -225,7 +225,8 @@ end
 
 -- readBytes reads count bytes from an ALIGNED stream into dst at offset. The
 -- reader must be byte aligned, else misuse; the whole run must fit, else
--- overflow (serialize.go ReadBytes; DESIGN.md (h)).
+-- overflow (serialize.go ReadBytes; DESIGN.md (h)). The run moves in one
+-- buffer.copy.
 function BitReader.readBytes(self: any, dst: buffer, offset: number?, count: number?)
 	local off = offset or 0
 	local cnt = count or buffer.len(dst)
@@ -238,9 +239,25 @@ function BitReader.readBytes(self: any, dst: buffer, offset: number?, count: num
 	if off + cnt > buffer.len(dst) then
 		error(RAISE_READ_DST, 2)
 	end
-	for i = 0, cnt - 1 do
-		buffer.writeu8(dst, off + i, self:readBits(8))
+	if cnt > 0 then
+		buffer.copy(dst, off, self._data, self._bitsRead // 8, cnt)
+		self._bitsRead += cnt * 8
 	end
+end
+
+-- readString reads count bytes from an ALIGNED stream as a string, in one
+-- buffer.readstring: a string read allocates only its result. The reader must
+-- be byte aligned, else misuse; the whole run must fit, else overflow.
+function BitReader.readString(self: any, count: number): string
+	if self._bitsRead % 8 ~= 0 then
+		error(RAISE_NOT_ALIGNED, 2)
+	end
+	if self._bitsRead + count * 8 > self._numBits then
+		error(RAISE_READ_OVERFLOW, 2)
+	end
+	local off = self._bitsRead // 8
+	self._bitsRead += count * 8
+	return buffer.readstring(self._data, off, count)
 end
 
 -- alignBits returns the number of align bits an align would read now, in
