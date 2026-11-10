@@ -226,6 +226,11 @@ local RAISE_BYTES_DATA = "serialize: serializeBytes data must be a buffer"
 local RAISE_BYTES_RANGE = "serialize: serializeBytes offset and count must be integers inside the buffer"
 
 local function bytesRange(data: any, offset: any, count: any): (number?, number?, string?)
+	if data == nil and count == 0 and (offset == nil or offset == 0) then
+		-- no destination and a zero count is not misuse on any stream: the
+		-- operation aligns and copies nothing (IMPLEMENTING.md U7)
+		return 0, 0, nil
+	end
 	if type(data) ~= "buffer" then
 		return nil, nil, RAISE_BYTES_DATA
 	end
