@@ -299,9 +299,9 @@ function T.TestU9FailOnWriteAndMeasure()
 	check(m:ok(), "measure fail recorded " .. tostring(m:error()))
 end
 
--- U9: a flush ends the write; serializeBits and serializeBytes after flush
--- raise the writer's misuse error before any bit moves, on a 16-byte and an
--- 8-byte buffer.
+-- U9, U11: a flush ends the write; serializeBits and serializeBytes after
+-- flush raise the writer's misuse error before any bit moves, on a 16-byte and
+-- an 8-byte buffer, a zero-length bytes or string included.
 function T.TestU9WriteAfterFlush()
 	local src = buffer.create(1)
 	buffer.writeu8(src, 0, 0xCD)
@@ -321,6 +321,29 @@ function T.TestU9WriteAfterFlush()
 			return b:serializeBytes(src)
 		end, "cannot write after flush")
 		check(b:bitsProcessed() == 8, "serializeBytes after flush moved bits on a " .. size .. "-byte buffer")
+
+		-- a zero-length write at a byte boundary moves no bits, and is still a
+		-- write after the flush: bytes in both forms, and an empty string
+		local zeroWrites: { [string]: (any) -> any } = {
+			["serializeBytes of a zero count"] = function(z)
+				return z:serializeBytes(src, 0, 0)
+			end,
+			["serializeBytes with no destination"] = function(z)
+				return z:serializeBytes(nil :: any, nil, 0)
+			end,
+			["serializeString of an empty string"] = function(z)
+				return z:serializeString({ value = "" }, 1)
+			end,
+		}
+		for what, write in zeroWrites do
+			local z = serialize.WriteStream.new(buffer.create(size))
+			check(z:serializeBits({ value = 0xAB }, 8), "the first 8 bits")
+			z:flush()
+			raises(function()
+				return write(z)
+			end, "cannot write after flush")
+			check(z:bitsProcessed() == 8, what .. " after flush moved bits on a " .. size .. "-byte buffer")
+		end
 	end
 end
 
