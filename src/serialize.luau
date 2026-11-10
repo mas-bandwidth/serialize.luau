@@ -9,8 +9,8 @@
 --
 -- The streams live in serialize_stream.luau. Every function here that belongs
 -- to a family forwards to that family's module, loaded lazily on the first
--- call (DESIGN.md (h)); while the file is absent the call raises
--- `serialize: <name> not implemented`.
+-- call (DESIGN.md (h)); while the file is absent the call raises the
+-- require error naming that module.
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 
