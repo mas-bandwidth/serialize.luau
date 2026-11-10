@@ -5,12 +5,12 @@
 -- helpers, wire compatible with mas-bandwidth/serialize (C++) v2.1.3
 -- (STANDARD.md, format version 2.0).
 --
--- The writer is STRICT: it emits exactly serialize.go's bytes. Write misuse
+-- The writer is STRICT: it emits exactly the reference's bytes. Write misuse
 -- (bits outside their range, a value too wide for its bits, a write that does
 -- not fit the room left) traps on write and measure, naming the rule, writes
 -- nothing for that call and latches nothing (IMPLEMENTING.md U9, U6); on read
 -- the same misuse refuses ValueOutOfRange (IMPLEMENTING.md U7). Reads refuse
--- where serialize.go refuses; a refusal leaves the caller's destination
+-- where the reference refuses; a refusal leaves the caller's destination
 -- untouched and the stream terminal (STANDARD.md, Reader Obligations).
 --
 -- The number model (DESIGN.md (c)): a value of 32 bits or fewer is a number,

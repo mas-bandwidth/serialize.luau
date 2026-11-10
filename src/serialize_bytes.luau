@@ -3,7 +3,7 @@
 -- STANDARD.md, Bytes and Strings, Reader Obligations, The vector format).
 --
 -- Wire compatible with mas-bandwidth/serialize (C++) v2.1.3: the same values
--- produce the same bytes, every refusal STANDARD.md and serialize.go state is
+-- produce the same bytes, every refusal STANDARD.md and the reference state is
 -- made, a refusal writes nothing (the whole operation's width is checked
 -- before any bit moves), reads never go past the data's end and hostile bytes
 -- never raise.
@@ -36,10 +36,10 @@ local RAISE_TEXT: { [string]: string } = {
 
 local M: { [string]: any } = {}
 
--- serialize_bitpacker.luau may not be on this card's base yet. When it is,
--- the stream's own bit primitives are used so the stream's scratch word and a
--- later family's writes stay coherent; while it is absent, the same bits go
--- through the buffer's own LSB-first bit operations.
+-- The stream's own bit primitives are used when serialize_bitpacker.luau is
+-- present so the stream's scratch word and a later family's writes stay
+-- coherent; without it, the same bits go through the buffer's own LSB-first
+-- bit operations.
 local hasBitpacker = pcall(function()
 	return Stream.family("bitpacker")
 end)

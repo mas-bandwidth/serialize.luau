@@ -8,8 +8,8 @@
 -- "does it fit in this tier?" flags, then the difference in the first tier it
 -- fits (or current as 32 raw bits in the absolute tier). Both values live in
 -- the non-negative int32 domain, 0 to 2147483647; previous outside it is API
--- misuse (serialize.go panicIntRelativeDomain), and every reconstruction is
--- checked against the domain and against previous, so no tier can wrap.
+-- misuse (the reference's int_relative domain check), and every reconstruction
+-- is checked against the domain and against previous, so no tier can wrap.
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 

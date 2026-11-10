@@ -4,7 +4,7 @@
 -- float quantized to a resolution, wire compatible with
 -- mas-bandwidth/serialize (C++) v2.1.3.
 --
--- The wire constants come from CompressedFloatParams (serialize.go stream.go):
+-- The wire constants come from CompressedFloatParams (the reference's stream):
 -- delta = max - min, values = delta / res clamped to [1, 4294967040],
 -- max_integer_value = ceil(values) and bits = bits_required(0, max_integer_value),
 -- all computed in float32. Every step of the quantization arithmetic is float32
@@ -15,7 +15,7 @@
 -- A non-finite value (NaN, +Inf, -Inf) traps on write and measure before any
 -- arithmetic, never clamped (STANDARD.md, compressed_float, Non-finite inputs;
 -- IMPLEMENTING.md U9, U6; DESIGN.md (e)) — the one deliberate deviation from
--- serialize.go's write arm, which clamps NaN to 0. The read arm never sees the
+-- the reference's write arm, which clamps NaN to 0. The read arm never sees the
 -- value.
 --
 -- The decode must be finite (STANDARD.md, compressed_float, "The decode must

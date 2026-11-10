@@ -13,8 +13,8 @@
 -- however short the data (STANDARD.md, Reader Obligations).
 --
 -- The writer is STRICT: for every value it emits exactly what the reference
--- emits, byte for byte; API misuse that serialize.go panics on raises the
--- same panic text (DESIGN.md (g)). Reads refuse where serialize.go refuses;
+-- emits, byte for byte; API misuse that the reference panics on raises the
+-- same panic text (DESIGN.md (g)). Reads refuse where the reference refuses;
 -- hostile bytes never raise. offset and count extend Go's []byte because a
 -- Luau buffer has no slices: omitted they are 0 and the buffer's length
 -- (DESIGN.md (h)).

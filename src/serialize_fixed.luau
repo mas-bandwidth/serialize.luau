@@ -8,11 +8,10 @@
 -- over the raw bounds (STANDARD.md fixed; mas-bandwidth/serialize (C++)
 -- fixedPointParams64/128 and SerializeFixed64/128, v2.1.3).
 --
--- This card lands without serialize_bits / serialize_int / serialize_int128
--- (they are not yet on the base branch), so the helpers this family needs —
--- bitsRequired64 and the Uint128 pair arithmetic — are implemented here,
--- inline, rather than required from those modules. The behavior is identical
--- to the design's dependency structure; the bytes are the serialize.go bytes.
+-- The helpers this family needs — bitsRequired64 and the Uint128 pair
+-- arithmetic — are implemented here, inline, rather than required from the
+-- bits, int and int128 modules. The behavior is identical to the design's
+-- dependency structure; the bytes are the reference's bytes.
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 
