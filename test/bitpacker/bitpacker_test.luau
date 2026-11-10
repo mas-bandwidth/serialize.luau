@@ -36,7 +36,7 @@ end
 -- The independent bit-by-bit LSB-first oracle: writes is an array of
 -- {value, bits} pairs; returns an array of bytes (1-indexed) of the packed
 -- stream, ceil(total bits / 8) of them.
-local function oracleBytes(writes)
+local function oracleBytes(writes: { { number } }): { number }
 	local total = 0
 	for _, w in writes do
 		total += w[2]
@@ -64,7 +64,7 @@ local function oracleBytes(writes)
 	return bytes
 end
 
-local function bytesToBuffer(bytes): buffer
+local function bytesToBuffer(bytes: { number }): buffer
 	local n = #bytes
 	local out = buffer.create(n)
 	for i = 1, n do
@@ -73,7 +73,7 @@ local function bytesToBuffer(bytes): buffer
 	return out
 end
 
-local function writeBufferEquals(actual: buffer, bytes)
+local function writeBufferEquals(actual: buffer, bytes: { number })
 	if buffer.len(actual) ~= #bytes then
 		error("byte length " .. buffer.len(actual) .. " != oracle " .. #bytes, 2)
 	end

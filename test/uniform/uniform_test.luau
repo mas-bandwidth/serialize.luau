@@ -20,7 +20,7 @@ local function check(cond: any, what: string)
 	end
 end
 
-local function raises(f: () -> any, want: string)
+local function raises(f: () -> ...any, want: string)
 	local ok, err = pcall(f)
 	check(not ok, "expected a raise containing " .. want)
 	check(string.find(tostring(err), want, 1, true) ~= nil, "raise was " .. tostring(err) .. ", want " .. want)

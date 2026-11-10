@@ -6,7 +6,7 @@
 #   sha256: 134dc762ad26232af83e43f98dec03ff6030dd3a4452f9408b9d50ccea025503
 #   unzip into dist/luau-0.741/ (luau, luau-analyze, luau-ast, luau-compile)
 #
-# make test          analyze src, conformance, fuzz and bench, then run every test/*/*_test.luau
+# make test          analyze src, every test, fuzz and bench, then run every test/*/*_test.luau
 # make test T=<name> analyze, then run the files of test/<name>/ only
 # make controls      the negative controls of tools/controls/controls.tsv: each
 #                    deletes one refusal rule and must fail exactly its
@@ -57,24 +57,36 @@ $(LUAURUN): tools/luaurun/main.go tools/luaurun/go.mod
 	@mkdir -p build
 	cd tools/luaurun && $(GO) build -o ../../$(LUAURUN) .
 
-# analyze runs pinned luau-analyze over every src file (all are --!strict), the
-# conformance tests, the fuzz driver and the bench. The tests and driver are
-# analyzed in a unit copy under build/analyze/, where their literal
-# require("./...") paths resolve to src/, inputs.luau and control.luau.
+# analyze runs pinned luau-analyze over every src file (all are --!strict),
+# every test file, the fuzz driver and the bench. Each test/<name>/ is analyzed
+# in a unit copy laid out as tools/luaurun lays out its run:
+# build/analyze/<name>/src/ holds src/*.luau, the .luau files of test/<name>/,
+# inputs.luau and control.luau, and test/<name>/plant/ files sit one level
+# above it, so literal require("./...") paths resolve as they do at run time.
+# The fuzz driver gets the same kind of unit under build/analyze/fuzz/.
 # Luau 0.741's --formatter=gnu is the diagnostic contract: a clean tree prints
 # nothing and exits 0. LocalUnused is a diagnostic that still exits 0, so a
 # nonempty log is a refusal. The log is printed either way, and a nonzero
 # status is preserved.
 analyze: toolchain-luau
 	@mkdir -p build
-	@rm -rf $(ANALYZE_UNIT)
-	@mkdir -p $(ANALYZE_UNIT)/conformance $(ANALYZE_UNIT)/fuzz
-	@cp src/*.luau test/conformance/*.luau $(wildcard test/*.luau) $(ANALYZE_UNIT)/conformance/
-	@printf 'return {}\n' >$(ANALYZE_UNIT)/conformance/inputs.luau
-	@printf 'return { name = "", expected = "" }\n' >$(ANALYZE_UNIT)/conformance/control.luau
-	@cp src/*.luau fuzz/*.luau $(ANALYZE_UNIT)/fuzz/
-	@printf 'return ""\n' >$(ANALYZE_UNIT)/fuzz/inputs.luau
-	@status=0; $(LUAU_ANALYZE) --formatter=gnu src/*.luau bench/*.luau $(ANALYZE_UNIT)/conformance/*.luau $(ANALYZE_UNIT)/fuzz/*.luau >build/analyze.log 2>&1 || status=$$?; \
+	@rm -rf $(ANALYZE_UNIT) build/analyze.files
+	@for dir in test/*/; do \
+		name=$$(basename $$dir); unit=$(ANALYZE_UNIT)/$$name/src; \
+		mkdir -p $$unit || exit 1; \
+		cp src/*.luau $$dir*.luau $$unit/ || exit 1; \
+		printf 'local inputs: { [string]: string } = {}\nreturn inputs\n' >$$unit/inputs.luau; \
+		printf 'return { name = "", expected = "" }\n' >$$unit/control.luau; \
+		for f in $$dir*.luau; do echo $$unit/$$(basename $$f) >>build/analyze.files; done; \
+		for f in $$(ls $$dir/plant/*.luau 2>/dev/null); do \
+			cp $$f $(ANALYZE_UNIT)/$$name/ || exit 1; \
+			echo $(ANALYZE_UNIT)/$$name/$$(basename $$f) >>build/analyze.files; done; \
+	done
+	@mkdir -p $(ANALYZE_UNIT)/fuzz/src
+	@cp src/*.luau fuzz/*.luau $(ANALYZE_UNIT)/fuzz/src/
+	@printf 'return ""\n' >$(ANALYZE_UNIT)/fuzz/src/inputs.luau
+	@for f in fuzz/*.luau; do echo $(ANALYZE_UNIT)/fuzz/src/$$(basename $$f) >>build/analyze.files; done
+	@status=0; $(LUAU_ANALYZE) --formatter=gnu src/*.luau bench/*.luau $$(cat build/analyze.files) >build/analyze.log 2>&1 || status=$$?; \
 	cat build/analyze.log; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	if [ -s build/analyze.log ]; then \

@@ -76,7 +76,7 @@ local function parseU128(s: string): U128
 	end
 	local v = { lo = 0i, hi = 0i }
 	for i = 1, #s do
-		local d = tonumber(s:sub(i, i))
+		local d = tonumber(s:sub(i, i)) :: number
 		local v10 = { lo = v.lo, hi = v.hi }
 		for _ = 1, 9 do
 			v10 = addU(v10, v)
@@ -105,7 +105,7 @@ local function parseRecords(text: string): { any }
 				cur = nil
 			end
 		elseif line:sub(1, 1) ~= "#" then
-			local k, v = line:match("^([%w_]+)%s+(.*)$")
+			local k, v: any = line:match("^([%w_]+)%s+(.*)$")
 			if k == "operation" then
 				if cur then
 					recs[#recs + 1] = cur
@@ -167,9 +167,9 @@ local function bufferEqualsBuf(actual: buffer, bytes: { number })
 end
 
 -- Run one record in the read direction.
-local function runReadRecord(rec)
-	local ib = tonumber(rec.params.integer_bits)
-	local fb = tonumber(rec.params.fraction_bits)
+local function runReadRecord(rec: any)
+	local ib = tonumber(rec.params.integer_bits) :: number
+	local fb = tonumber(rec.params.fraction_bits) :: number
 	local mn = toInteger(rec.params.min)
 	local mx = toInteger(rec.params.max)
 	local data = bufFromBytes(rec.bytes)
@@ -246,9 +246,9 @@ local function runReadRecord(rec)
 end
 
 -- Run one record in the write direction (only records carrying `writer canonical`).
-local function runWriteRecord(rec)
-	local ib = tonumber(rec.params.integer_bits)
-	local fb = tonumber(rec.params.fraction_bits)
+local function runWriteRecord(rec: any)
+	local ib = tonumber(rec.params.integer_bits) :: number
+	local fb = tonumber(rec.params.fraction_bits) :: number
 	local mn = toInteger(rec.params.min)
 	local mx = toInteger(rec.params.max)
 	local sum = ib + fb

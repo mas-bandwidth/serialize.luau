@@ -15,7 +15,8 @@ local int = require("./serialize_int")
 local int128 = require("./serialize_int128")
 local inputs = require("./inputs")
 
-local Int128 = int128.Int128
+local Int128: any = int128.Int128
+local Uint128: any = int128.Uint128
 
 local function fail(message: string): never
 	error(message, 2)
@@ -118,7 +119,7 @@ local function parseInt32(text: string): number
 	if value == nil or value % 1 ~= 0 then
 		fail("not an int32: " .. text)
 	end
-	return value
+	return value :: number
 end
 
 local function parseInteger(text: string): integer
@@ -336,7 +337,7 @@ function tests.TestBitsRequired64()
 		{ negFiveBillion, posFiveBillion, 34 },
 	}
 	for _, c in cases do
-		eq(int.bitsRequired64(c[1], c[2]), c[3], "bitsRequired64")
+		eq(int.bitsRequired64(c[1] :: integer, c[2] :: integer), c[3], "bitsRequired64")
 	end
 	eq(int128.bitsRequired128(Int128.from64(-5000000000i), Int128.from64(5000000000i)), 34, "bitsRequired128")
 	eq(int128.bitsRequired128(Int128.from64(5i), Int128.from64(5i)), 0, "bitsRequired128 degenerate")
@@ -447,7 +448,7 @@ end
 
 function tests.TestInt128ZeroDivisors()
 	local zero = Int128.new(0i, 0i)
-	for _, cls in { Int128, int128.Uint128 } do
+	for _, cls in { Int128, Uint128 } do
 		for _, a in { zero, Int128.from64(1i), Int128.from64(-1i) } do
 			for _, operation in { cls.divMod, cls.div, cls.mod } do
 				local ok, message = pcall(operation, a, zero)
@@ -460,7 +461,7 @@ function tests.TestInt128ZeroDivisors()
 end
 
 function tests.TestUint128Division()
-	local U = int128.Uint128
+	local U = Uint128
 	-- Unsigned full-width inputs retain unsigned quotient/remainder semantics.
 	local a = U.new(0xffffffffffffffffi, 0xffffffffffffffffi)
 	local b = U.new(0i, 0x8000000000000000i)

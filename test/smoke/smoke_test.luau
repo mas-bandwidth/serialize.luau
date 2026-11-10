@@ -59,7 +59,7 @@ function T.TestSmoke()
 
 	-- Every API name DESIGN.md (a) lists exists.
 	for _, name in ENTRY do
-		check(serialize[name] ~= nil, "entry name " .. name .. " exists")
+		check((serialize :: any)[name] ~= nil,"entry name " .. name .. " exists")
 	end
 	check(serialize.FORMAT_VERSION == "2.0", "format version 2.0")
 	-- The closed list of refusal reasons, spelled exactly as STANDARD.md,
@@ -76,7 +76,7 @@ function T.TestSmoke()
 		Rejected = "rejected",
 	}
 	local listed = 0
-	for key, value in serialize.SerializeError do
+	for key, value in (serialize.SerializeError :: any) do
 		check(REASONS[key] == value, "SerializeError." .. tostring(key) .. " is " .. tostring(value) .. ", not a reason the standard lists")
 		listed += 1
 	end
