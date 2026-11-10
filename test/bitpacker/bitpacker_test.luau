@@ -344,6 +344,24 @@ local function testWriteAfterFlush()
 	end
 end
 
+-- A bit count must be an integer in [1,32]: a NaN (0/0) or a fractional count
+-- is refused by both the writer and the reader.
+local function testBitCountMustBeInteger()
+	local nan = 0 / 0
+	raises(function()
+		BitWriter.new(buffer.create(8)):writeBits(1, nan)
+	end, "bits must be in [1,32]")
+	raises(function()
+		BitWriter.new(buffer.create(8)):writeBits(1, 2.5)
+	end, "bits must be in [1,32]")
+	raises(function()
+		BitReader.new(buffer.create(8)):readBits(nan)
+	end, "bits must be in [1,32]")
+	raises(function()
+		BitReader.new(buffer.create(8)):readBits(2.5)
+	end, "bits must be in [1,32]")
+end
+
 -- The misuse raises the brief names, each with serialize.go's panic text.
 local function testMisuse()
 	raises(function()
@@ -393,6 +411,7 @@ function T.TestBitpacker()
 	testReadAlignRefuse()
 	testBytesApis()
 	testWriteAfterFlush()
+	testBitCountMustBeInteger()
 	testMisuse()
 end
 
