@@ -6,7 +6,7 @@
 #   sha256: 134dc762ad26232af83e43f98dec03ff6030dd3a4452f9408b9d50ccea025503
 #   unzip into dist/luau-0.741/ (luau, luau-analyze, luau-ast, luau-compile)
 #
-# make test          analyze src/*.luau, then run every test/*/*_test.luau
+# make test          analyze src, conformance, fuzz and bench, then run every test/*/*_test.luau
 # make test T=<name> analyze, then run the files of test/<name>/ only
 # make controls      the negative controls of tools/controls/controls.tsv: each
 #                    deletes one refusal rule and must fail exactly its
@@ -25,6 +25,7 @@ export LUAU LUAU_ANALYZE
 
 GO ?= go
 LUAURUN := build/luaurun
+ANALYZE_UNIT := build/analyze
 
 .PHONY: all dist-luau toolchain-luau analyze test controls clean
 all: test
@@ -56,14 +57,24 @@ $(LUAURUN): tools/luaurun/main.go tools/luaurun/go.mod
 	@mkdir -p build
 	cd tools/luaurun && $(GO) build -o ../../$(LUAURUN) .
 
-# analyze runs pinned luau-analyze over every src file (all are --!strict).
+# analyze runs pinned luau-analyze over every src file (all are --!strict), the
+# conformance tests, the fuzz driver and the bench. The tests and driver are
+# analyzed in a unit copy under build/analyze/, where their literal
+# require("./...") paths resolve to src/, inputs.luau and control.luau.
 # Luau 0.741's --formatter=gnu is the diagnostic contract: a clean tree prints
 # nothing and exits 0. LocalUnused is a diagnostic that still exits 0, so a
 # nonempty log is a refusal. The log is printed either way, and a nonzero
 # status is preserved.
 analyze: toolchain-luau
 	@mkdir -p build
-	@status=0; $(LUAU_ANALYZE) --formatter=gnu src/*.luau >build/analyze.log 2>&1 || status=$$?; \
+	@rm -rf $(ANALYZE_UNIT)
+	@mkdir -p $(ANALYZE_UNIT)/conformance $(ANALYZE_UNIT)/fuzz
+	@cp src/*.luau test/conformance/*.luau $(wildcard test/*.luau) $(ANALYZE_UNIT)/conformance/
+	@printf 'return {}\n' >$(ANALYZE_UNIT)/conformance/inputs.luau
+	@printf 'return { name = "", expected = "" }\n' >$(ANALYZE_UNIT)/conformance/control.luau
+	@cp src/*.luau fuzz/*.luau $(ANALYZE_UNIT)/fuzz/
+	@printf 'return ""\n' >$(ANALYZE_UNIT)/fuzz/inputs.luau
+	@status=0; $(LUAU_ANALYZE) --formatter=gnu src/*.luau bench/*.luau $(ANALYZE_UNIT)/conformance/*.luau $(ANALYZE_UNIT)/fuzz/*.luau >build/analyze.log 2>&1 || status=$$?; \
 	cat build/analyze.log; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	if [ -s build/analyze.log ]; then \

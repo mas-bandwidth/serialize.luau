@@ -132,7 +132,7 @@ local function parseVecFile(text: string): { any }
 			if v ~= nil then cur.name = v end
 			local pk, pv = trimmed:match("^param ([%w_]+) = (.+)$")
 			if pk == "step" then
-				cur.steps[#cur.steps + 1] = parseStep(pv)
+				cur.steps[#cur.steps + 1] = parseStep(pv :: string)
 			elseif pk ~= nil then
 				cur.params[pk] = pv
 			end
@@ -276,13 +276,6 @@ local function parse128(text: string): any
 	return acc
 end
 
-local function floor128(x: any): integer
-	if Int128.cmp(x, Int128.from64(0i)) < 0 then
-		return Int128.neg(Int128.floor(Int128.neg(x)))
-	end
-	return Int128.floor(x)
-end
-
 -- ---------------------------------------------------------------------------
 -- Helpers for accepted/refused record checks (STANDARD.md, What a runner
 -- checks).
@@ -301,12 +294,6 @@ local function checkTerminal(r: any, op: string, args: { any })
 	check(failed, "a refused stream is not terminal")
 	check(r:bitsProcessed() == before, "a read after a refusal consumed bits")
 	check(h.value == UNTOUCHED, "a read after a refusal wrote its destination")
-end
-
-local function runAcceptRead(r: any, rec: any, want: any, reader: (any) -> boolean)
-	check(reader(r), rec.name .. ": accepted read refused (" .. tostring(r:error()) .. ")")
-	check(r:bitsProcessed() == rec.consumed,
-		rec.name .. ": consumed " .. tostring(r:bitsProcessed()) .. " != " .. tostring(rec.consumed))
 end
 
 -- ---------------------------------------------------------------------------
@@ -434,10 +421,6 @@ local function runRange(r: any, rec: any, kind: string)
 		w:flush()
 		check(sameBytes(rec.bytes, w:data()), rec.name .. ": " .. kind .. " writer bytes mismatch")
 	end
-end
-
-local function runInt128(r: any, rec: any)
-	runRange(r, rec, "int128")
 end
 
 local function runUint128(r: any, rec: any)
@@ -626,10 +609,6 @@ local function runIntRelative(r: any, rec: any)
 	end
 end
 
-local function missingFamily(op: string)
-	fail("operation " .. op .. " has no runner: src/serialize_" .. op .. ".luau is absent")
-end
-
 local function runFixed(r: any, rec: any)
 	local integerBits = tonumber(rec.params.integer_bits) :: number
 	local fractionBits = tonumber(rec.params.fraction_bits) :: number
@@ -737,7 +716,7 @@ end
 -- Sequence steps (sequence.txt, object.txt, message.txt; STANDARD.md The
 -- vector format, A sequence vector).
 
-local function parseOneStep(r: any, st: { string }, out: { any }): boolean
+local function parseOneStep(r: any, st: { [any]: any }, out: { any }): boolean
 	local op = st[1]
 	local dec = st.decoded
 	if op == "bits" then
@@ -903,7 +882,7 @@ end
 -- refusal to be terminal, so after the first failing step every later step
 -- must also fail, consume no bits, and leave its destination untouched — the
 -- runner must check that by behavior, not by an accessor.
-local function runSteps(r: any, steps: { { string } }, out: { any }, poison: boolean): boolean
+local function runSteps(r: any, steps: { [any]: any }, out: { any }, poison: boolean): boolean
 	local i = 1
 	local failed = false
 	local bitsAtFailure = 0
@@ -1133,7 +1112,7 @@ local function checkCallbackRefusal(rec: any)
 	check(r:error() == "rejected",
 		rec.name .. ": a callback-only object refusal latched " .. tostring(r:error()) .. ", not rejected")
 	local called = false
-	local after = { serialize = function(_: any, _s: any): boolean called = true return true end }
+	local after = { serialize = function(_: any, _s: any): boolean called = true; return true end }
 	check(not r:serializeObject(after) and not called,
 		rec.name .. ": a nested object ran or was accepted after a callback-only refusal")
 	checkTerminal(r, "bits", {})
