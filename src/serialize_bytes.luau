@@ -2,7 +2,7 @@
 -- serialize_bytes.luau — bytes and string (DESIGN.md (g) and (h);
 -- STANDARD.md, Bytes and Strings, Reader Obligations, The vector format).
 --
--- Wire compatible with mas-bandwidth/serialize (C++) v2.1.3: the same values
+-- Wire compatible with mas-bandwidth/serialize (C++) v2.1.4: the same values
 -- produce the same bytes, every refusal STANDARD.md and the reference state is
 -- made, a refusal writes nothing (the whole operation's width is checked
 -- before any bit moves), reads never go past the data's end and hostile bytes

@@ -1,7 +1,7 @@
 --!strict
 -- serialize_stream.luau — the three streams, WriteStream, ReadStream and
 -- MeasureStream (DESIGN.md (a), (g) and (h)), wire compatible with
--- mas-bandwidth/serialize (C++) v2.1.3 (STANDARD.md, format version 2.0).
+-- mas-bandwidth/serialize (C++) v2.1.4 (STANDARD.md, format version 2.0).
 --
 -- This file holds what every stream shares and no family decides: the latch,
 -- terminality, the bit accounting, the fixed-width read and measure gates,

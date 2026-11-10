@@ -2,7 +2,7 @@
 -- serialize_bits.luau — the bits family (DESIGN.md (a), (b), (c), (g) and
 -- (h)): serializeBits, serializeBits64, bool and the fixed-width unsigned
 -- helpers uint8/16/32/64, plus bitsRequired, bitsRequired64 and the zig-zag
--- helpers, wire compatible with mas-bandwidth/serialize (C++) v2.1.3
+-- helpers, wire compatible with mas-bandwidth/serialize (C++) v2.1.4
 -- (STANDARD.md, format version 2.0).
 --
 -- The writer is STRICT: it emits exactly the reference's bytes. Write misuse
