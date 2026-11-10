@@ -42,7 +42,7 @@ local RAISE_BOUNDS = "serialize: fixed point bounds in whole units do not fit th
 -- wrapping semantics (serialize.go int128.go).
 local Bits = require("./serialize_bits")
 local Int128 = require("./serialize_int128")
-local Uint128 = Int128.Uint128
+local Uint128: any = Int128.Uint128
 local bitsRequired64 = Bits.bitsRequired64
 
 type U128 = { lo: integer, hi: integer }
