@@ -1,8 +1,8 @@
 --!strict
 -- serialize_bitpacker.luau — BitWriter and BitReader (DESIGN.md (a), (b),
 -- (g) and (h)), the bitpacking bottom layer of the serialize.luau library,
--- wire compatible with serialize (STANDARD.md, format version 2.0) and
--- serialize.go v2.0.0 bitpacker.go: the same values produce the same bytes.
+-- wire compatible with mas-bandwidth/serialize (C++) v2.1.3 (STANDARD.md,
+-- format version 2.0): the same values produce the same bytes.
 --
 -- The writer packs bits least-significant-bit first into a 64-bit scratch
 -- word; a value that crosses the 64-bit boundary is split (low 64-s bits
@@ -12,9 +12,9 @@
 -- a byte. The reader reads the same wire, never a byte past the data's end,
 -- however short the data (STANDARD.md, Reader Obligations).
 --
--- The writer is STRICT: for every value it emits exactly serialize.go v2.0.0
--- emits, byte for byte; API misuse that serialize.go panics on raises the
--- same panic text (DESIGN.md (g)). Reads refuse where serialize.go refuses;
+-- The writer is STRICT: for every value it emits exactly what the reference
+-- emits, byte for byte; API misuse that the reference panics on raises the
+-- same panic text (DESIGN.md (g)). Reads refuse where the reference refuses;
 -- hostile bytes never raise. offset and count extend Go's []byte because a
 -- Luau buffer has no slices: omitted they are 0 and the buffer's length
 -- (DESIGN.md (h)).

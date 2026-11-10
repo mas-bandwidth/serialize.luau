@@ -1,7 +1,8 @@
 --!strict
 -- serialize_float.luau — float and double, and the float32 narrowing (DESIGN.md
 -- (e) and (h); STANDARD.md, Floating Point, "float", "double" and "Finite
--- values only, every one bit exact").
+-- values only, every one bit exact"), wire compatible with
+-- mas-bandwidth/serialize (C++) v2.1.3.
 --
 -- serializeFloat writes the 32 bits of the IEEE-754 single-precision
 -- representation as one 32-bit group; serializeDouble writes the 64 bits of

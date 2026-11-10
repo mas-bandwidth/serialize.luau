@@ -2,10 +2,11 @@
 -- serialize_bytes.luau — bytes and string (DESIGN.md (g) and (h);
 -- STANDARD.md, Bytes and Strings, Reader Obligations, The vector format).
 --
--- Wire compatible with serialize.go v2.0.0: the same values produce the same
--- bytes, every refusal STANDARD.md and serialize.go state is made, a refusal
--- writes nothing (the whole operation's width is checked before any bit
--- moves), reads never go past the data's end and hostile bytes never raise.
+-- Wire compatible with mas-bandwidth/serialize (C++) v2.1.3: the same values
+-- produce the same bytes, every refusal STANDARD.md and the reference state is
+-- made, a refusal writes nothing (the whole operation's width is checked
+-- before any bit moves), reads never go past the data's end and hostile bytes
+-- never raise.
 --
 -- The stream's bit I/O is reached through its own bit primitives, so the
 -- stream's scratch word and a later family's writes stay coherent (DESIGN.md

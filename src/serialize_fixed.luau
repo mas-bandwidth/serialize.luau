@@ -5,13 +5,13 @@
 -- the stored integer the real value scaled by 2^fraction_bits, min and max
 -- whole-unit bounds. The encoding is an offset encoding over the RAW (scaled)
 -- bounds, byte identical to serializeInt64 / serializeInt128 of the raw value
--- over the raw bounds (STANDARD.md fixed; serialize.go fixedPointParams64/128
--- and SerializeFixed64/128, v2.0.0).
+-- over the raw bounds (STANDARD.md fixed; mas-bandwidth/serialize (C++)
+-- fixedPointParams64/128 and SerializeFixed64/128, v2.1.3).
 --
 -- The helpers this family needs — bitsRequired64 and the Uint128 pair
 -- arithmetic — come from serialize_bits and serialize_int128, so the design's
 -- dependency structure has one implementation of each; the bytes are the
--- serialize.go bytes.
+-- reference's bytes.
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 
