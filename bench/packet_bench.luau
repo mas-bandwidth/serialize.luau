@@ -39,7 +39,7 @@ for i = 0, 23 do
 end
 
 local function serializePacket(stream: any, seq: number, h: any, payload: buffer): boolean
-	h.value = seq % 2 == 0 and 1 or 0
+	h.value = seq % 2 == 0
 	if not stream:serializeBool(h) then return false end
 	h.value = seq % 8
 	if not stream:serializeBits(h, 3) then return false end
