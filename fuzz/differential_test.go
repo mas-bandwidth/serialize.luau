@@ -1,6 +1,6 @@
 // Package fuzz holds the differential fuzz test for the Luau serialize port
 // (DESIGN.md; this card). TestDifferentialAgainstSerializeGo generates random
-// programs from a fixed seed, writes them with serialize.go v2.0.0 and with the
+// programs from a fixed seed, writes them with serialize.go v2.1.1 and with the
 // Luau port via fuzz/driver.luau, and compares bytes, read-back traces and
 // mutated-read decisions. Every read ends with SerializeEnd (STANDARD.md end),
 // and a refusal is traced with its reason (STANDARD.md, Refusal reasons), so
