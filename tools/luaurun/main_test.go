@@ -37,6 +37,20 @@ func TestCorpusRootOverride(t *testing.T) {
 // directory of SERIALIZE_CORPUS_EXTRA_DIR; a controls build never reads them
 // (runUnit asks only when u.control is empty); a name in two places is refused
 // and a named directory that is missing is an error.
+// A *_test.luau file with zero Test functions must be named even when a
+// sibling file in the same directory runs tests (reversed witness: at the
+// base the runner only refused a directory that ran zero tests in total).
+func TestNoTestModules(t *testing.T) {
+	out := "NO-TESTS empty_test\nRUN TestGood\n--- PASS TestGood\n"
+	got := noTestModules(out)
+	if len(got) != 1 || got[0] != "empty_test" {
+		t.Fatalf("a file with no Test functions is named, got %v", got)
+	}
+	if got := noTestModules("RUN TestGood\n--- PASS TestGood\n"); len(got) != 0 {
+		t.Fatalf("a run where every file has tests names none, got %v", got)
+	}
+}
+
 func TestExtraCorpusDirs(t *testing.T) {
 	root := t.TempDir()
 	reg := filepath.Join(root, "conformance-regress")

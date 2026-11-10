@@ -8,7 +8,7 @@
 -- measure count, the reader's value and bits consumed, and a refusal's
 -- destination and terminality. The edge cases are serialize.go v1.15.1's
 -- TestBitsRequired, TestBitsRequired64 and TestSerializeInt64FullRange, plus
--- the writer's ValueOutOfRange latch one past each bound.
+-- the write-misuse trap one past each bound.
 
 local serialize = require("./serialize")
 local int = require("./serialize_int")
@@ -321,7 +321,7 @@ function tests.TestBitsRequired()
 		{ 0, 65535, 16 }, { 0, 4294967295, 32 },
 	}
 	for _, c in cases do
-		eq(int.bitsRequired(c[1], c[2]), c[3], string.format("bitsRequired(%d,%d)", c[1], c[2]))
+		eq(serialize.bitsRequired(c[1], c[2]), c[3], string.format("bitsRequired(%d,%d)", c[1], c[2]))
 	end
 end
 
@@ -337,10 +337,79 @@ function tests.TestBitsRequired64()
 		{ negFiveBillion, posFiveBillion, 34 },
 	}
 	for _, c in cases do
-		eq(int.bitsRequired64(c[1] :: integer, c[2] :: integer), c[3], "bitsRequired64")
+		eq(serialize.bitsRequired64(c[1] :: integer, c[2] :: integer), c[3], "bitsRequired64")
 	end
-	eq(int128.bitsRequired128(Int128.from64(-5000000000i), Int128.from64(5000000000i)), 34, "bitsRequired128")
-	eq(int128.bitsRequired128(Int128.from64(5i), Int128.from64(5i)), 0, "bitsRequired128 degenerate")
+	eq(serialize.bitsRequired128(Int128.from64(-5000000000i), Int128.from64(5000000000i)), 34, "bitsRequired128")
+	eq(serialize.bitsRequired128(Int128.from64(5i), Int128.from64(5i)), 0, "bitsRequired128 degenerate")
+end
+
+function tests.TestSignedToUnsigned()
+	local cases = {
+		{ 0, 0 }, { 1, 2 }, { -1, 1 }, { 2, 4 }, { -2, 3 },
+		{ 2147483647, 4294967294 }, { -2147483648, 4294967295 },
+	}
+	for _, c in cases do
+		eq(serialize.signedToUnsigned(c[1]), c[2], string.format("signedToUnsigned(%d)", c[1]))
+		eq(serialize.unsignedToSigned(serialize.signedToUnsigned(c[1])), c[1], string.format("signedToUnsigned round trip (%d)", c[1]))
+	end
+end
+
+function tests.TestUnsignedToSigned()
+	local cases = {
+		{ 0, 0 }, { 1, -1 }, { 2, 1 }, { 3, -2 }, { 4, 2 },
+		{ 4294967294, 2147483647 }, { 4294967295, -2147483648 },
+	}
+	for _, c in cases do
+		eq(serialize.unsignedToSigned(c[1]), c[2], string.format("unsignedToSigned(%d)", c[1]))
+	end
+end
+
+local function eq128(actual: any, lo: integer, hi: integer, what: string)
+	eq(actual.lo, lo, what .. " lo")
+	eq(actual.hi, hi, what .. " hi")
+end
+
+function tests.TestInt128Helpers()
+	eq128(Int128.lsh(Int128.new(1i, 0i), 1), 2i, 0i, "Int128.lsh by 1")
+	eq128(Int128.lsh(Int128.new(1i, 0i), 64), 0i, 1i, "Int128.lsh by 64")
+	eq128(Int128.lsh(Int128.new(3i, 0i), 65), 0i, 6i, "Int128.lsh by 65")
+	eq128(Int128.lsh(Int128.new(1i, 2i), 128), 0i, 0i, "Int128.lsh by 128")
+	eq128(Int128.lsh(Int128.new(1i, 2i), 0), 1i, 2i, "Int128.lsh by 0")
+	eq128(Int128.rsh(Int128.new(0i, 1i), 64), 1i, 0i, "Int128.rsh by 64")
+	eq128(Int128.rsh(Int128.new(8i, 0i), 2), 2i, 0i, "Int128.rsh by 2")
+	eq128(Int128.rsh(Int128.new(1i, 2i), 128), 0i, 0i, "Int128.rsh by 128")
+	eq128(Int128.rsh(Int128.new(1i, 2i), 0), 1i, 2i, "Int128.rsh by 0")
+	eq128(Int128.band(Int128.new(12i, 10i), Int128.new(10i, 12i)), 8i, 8i, "Int128.band")
+	eq128(Int128.bor(Int128.new(12i, 10i), Int128.new(10i, 12i)), 14i, 14i, "Int128.bor")
+	eq128(Int128.bxor(Int128.new(12i, 10i), Int128.new(10i, 12i)), 6i, 6i, "Int128.bxor")
+	eq128(Int128.bnot(Int128.new(0i, 0i)), -1i, -1i, "Int128.bnot of zero")
+	eq128(Int128.bnot(Int128.new(-1i, -1i)), 0i, 0i, "Int128.bnot of all ones")
+	eq(Int128.len(Int128.new(0i, 0i)), 0, "Int128.len of zero")
+	eq(Int128.len(Int128.new(1i, 0i)), 1, "Int128.len of one")
+	eq(Int128.len(Int128.new(255i, 0i)), 8, "Int128.len of 255")
+	eq(Int128.len(Int128.new(256i, 0i)), 9, "Int128.len of 256")
+	eq(Int128.len(Int128.new(0i, 1i)), 65, "Int128.len across lanes")
+	eq(Int128.len(Int128.new(0i, -1i)), 128, "Int128.len of all ones")
+	eq(Int128.isNegative(Int128.from64(-1i)), true, "Int128.isNegative of -1")
+	eq(Int128.isNegative(Int128.from64(1i)), false, "Int128.isNegative of 1")
+	eq(Int128.isNegative(Int128.new(0i, 1i)), false, "Int128.isNegative across lanes")
+	eq(Int128.isZero(Int128.new(0i, 0i)), true, "Int128.isZero of zero")
+	eq(Int128.isZero(Int128.new(1i, 0i)), false, "Int128.isZero of lo lane")
+	eq(Int128.isZero(Int128.new(0i, 1i)), false, "Int128.isZero of hi lane")
+end
+
+function tests.TestUint128Helpers()
+	eq128(Uint128.lsh(Uint128.new(1i, 0i), 64), 0i, 1i, "Uint128.lsh by 64")
+	eq128(Uint128.rsh(Uint128.new(0i, 1i), 64), 1i, 0i, "Uint128.rsh by 64")
+	eq128(Uint128.band(Uint128.new(12i, 10i), Uint128.new(10i, 12i)), 8i, 8i, "Uint128.band")
+	eq128(Uint128.bor(Uint128.new(12i, 10i), Uint128.new(10i, 12i)), 14i, 14i, "Uint128.bor")
+	eq128(Uint128.bxor(Uint128.new(12i, 10i), Uint128.new(10i, 12i)), 6i, 6i, "Uint128.bxor")
+	eq128(Uint128.bnot(Uint128.new(0i, 0i)), -1i, -1i, "Uint128.bnot of zero")
+	eq(Uint128.len(Uint128.new(0i, 0i)), 0, "Uint128.len of zero")
+	eq(Uint128.len(Uint128.new(0i, 1i)), 65, "Uint128.len across lanes")
+	eq(Uint128.isNegative(Uint128.new(1i, 0i)), false, "Uint128.isNegative of 1")
+	eq(Uint128.isZero(Uint128.new(0i, 0i)), true, "Uint128.isZero of zero")
+	eq(Uint128.isZero(Uint128.new(0i, 1i)), false, "Uint128.isZero of hi lane")
 end
 
 function tests.TestSerializeInt64FullRange()

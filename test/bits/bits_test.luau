@@ -429,6 +429,43 @@ local function testMeasure()
 	end
 end
 
+-- bitsRequired: both bounds are integers and the span is in
+-- [0, 4294967295]. bit32.countlz truncates modulo 2^32, so a span
+-- outside that (or a non-integer) must raise rather than wrap.
+
+local function expectBitsRequiredRaise(min: any, max: any)
+	local ok, err = pcall(serialize.bitsRequired, min, max)
+	if ok then
+		fail(string.format("bitsRequired(%s, %s) did not raise", tostring(min), tostring(max)))
+	end
+	if string.find(tostring(err), "serialize:", 1, true) == nil then
+		fail(string.format("bitsRequired(%s, %s) raised %s, want serialize: text", tostring(min), tostring(max), tostring(err)))
+	end
+end
+
+function T.TestBitsRequired()
+	local cases = {
+		{ 0, 0, 0 }, { 0, 1, 1 }, { 0, 2, 2 }, { 0, 3, 2 }, { 0, 4, 3 },
+		{ 0, 5, 3 }, { 0, 7, 3 }, { 0, 8, 4 }, { 0, 255, 8 },
+		{ 0, 65535, 16 }, { 0, 4294967295, 32 },
+		{ -1, 0, 1 }, { -2147483648, 2147483647, 32 },
+	}
+	for _, c in cases do
+		local got = serialize.bitsRequired(c[1], c[2])
+		if got ~= c[3] then
+			fail(string.format("bitsRequired(%d, %d) = %d, want %d", c[1], c[2], got, c[3]))
+		end
+	end
+	expectBitsRequiredRaise(0, 4294967296)
+	expectBitsRequiredRaise(0, 4294967301)
+	expectBitsRequiredRaise(5, 3)
+	expectBitsRequiredRaise(4294967295, 0)
+	expectBitsRequiredRaise(-1, 4294967295)
+	expectBitsRequiredRaise(0.5, 1)
+	expectBitsRequiredRaise(0, 0 / 0)
+	expectBitsRequiredRaise(0, "1")
+end
+
 function T.TestSerializeBits()
 	runFile("bits")
 	runFile("bool")
