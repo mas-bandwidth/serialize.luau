@@ -263,9 +263,7 @@ function M.writeBytes(s: any, data: any, offset: any, count: any): boolean
 		return s:_misuse(RAISE_ROOM)
 	end
 	writeBitsRaw(s, 0, align)
-	if n > 0 then
-		s:_writeBytes(data, off, n)
-	end
+	s:_writeBytes(data, off, n)
 	return true
 end
 
@@ -341,9 +339,7 @@ function M.writeString(s: any, holder: any, bufferSize: any): boolean
 	end
 	writeLength(s, length, maxLength)
 	writeBitsRaw(s, 0, align)
-	if length > 0 then
-		s:_writeBytes(buffer.fromstring(value), 0, length)
-	end
+	s:_writeBytes(buffer.fromstring(value), 0, length)
 	return true
 end
 
