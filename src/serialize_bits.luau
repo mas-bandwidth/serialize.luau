@@ -39,7 +39,7 @@ local RAISE_INTEGER_UINT64 = "serialize: serializeUint64 value must be an intege
 local RAISE_UINT8 = "serialize: serializeUint8 value must be an integer in [0,2^8)"
 local RAISE_UINT16 = "serialize: serializeUint16 value must be an integer in [0,2^16)"
 local RAISE_UINT32 = "serialize: serializeUint32 value must be an integer in [0,2^32)"
-local RAISE_BITS_REQUIRED = "serialize: bitsRequired min and max must be integers in [-2^31, 2^32)"
+local RAISE_BITS_REQUIRED = "serialize: bitsRequired min and max must be integers and 0 <= max - min <= 4294967295"
 
 -- POW2[n] is 2^n for n in [1,32], the exclusive top of an n-bit value.
 local POW2: { number } = {}
@@ -268,14 +268,16 @@ end
 
 -- bitsRequired(min, max) is the bits the range [min,max] takes (STANDARD.md
 -- int (ranged)): 0 when the range is degenerate, else the bit length of
--- max - min modulo 2^32. Each bound is an integer in [-2^31, 2^32); anything
--- else is misuse, not a wrapped width.
+-- max - min. bit32.countlz truncates modulo 2^32, so a non-integer bound or
+-- a span outside [0, 4294967295] is misuse, not a wrapped width.
 function M.bitsRequired(min: number, max: number): number
-	if type(min) ~= "number" or min % 1 ~= 0 or min < -2147483648 or min >= 4294967296
-		or type(max) ~= "number" or max % 1 ~= 0 or max < -2147483648 or max >= 4294967296 then
+	if type(min) ~= "number" or min % 1 ~= 0 or type(max) ~= "number" or max % 1 ~= 0 then
 		error(RAISE_BITS_REQUIRED, 2)
 	end
-	local diff = (max - min) % 4294967296
+	local diff = max - min
+	if not (diff >= 0 and diff <= 4294967295) then
+		error(RAISE_BITS_REQUIRED, 2)
+	end
 	if diff == 0 then
 		return 0
 	end
