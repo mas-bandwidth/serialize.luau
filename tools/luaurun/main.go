@@ -18,8 +18,10 @@
 // every function named Test<Name> in sorted order and prints RUN Test<Name>,
 // then --- PASS Test<Name> or --- FAIL Test<Name> with the raise indented on
 // the next line. The runner passes stdout through and exits nonzero on a FAIL,
-// on an interpreter that exits nonzero, on a directory that runs no test, and
-// on a missing or empty test/<name>/, naming it: never a skip.
+// on an interpreter that exits nonzero, on a directory that runs no test, on
+// any single *_test.luau file that runs no Test function (the driver prints a
+// NO-TESTS line for it), and on a missing or empty test/<name>/, naming it:
+// never a skip.
 //
 // Usage: luaurun -root <repo> [name...]; no names runs every test/*/.
 // The interpreter is $LUAU, else <repo>/dist/luau-0.741/luau.
@@ -281,6 +283,11 @@ func runUnit(root, luau string, u runSpec, stdout, stderr io.Writer) bool {
 	case runErr != nil:
 		fmt.Fprintf(stdout, "FAIL %s: luau exited: %v\n", label, runErr)
 		return false
+	case len(noTestModules(out.String())) != 0:
+		for _, mod := range noTestModules(out.String()) {
+			fmt.Fprintf(stdout, "FAIL %s: %s.luau ran no Test functions\n", label, mod)
+		}
+		return false
 	case runs == 0:
 		fmt.Fprintf(stdout, "FAIL %s ran no Test functions\n", label)
 		return false
@@ -290,6 +297,18 @@ func runUnit(root, luau string, u runSpec, stdout, stderr io.Writer) bool {
 	}
 	fmt.Fprintf(stdout, "ok %s %d passed\n", label, passes)
 	return true
+}
+
+// noTestModules is the module names the driver reported with a NO-TESTS
+// line: *_test.luau files whose returned table holds no Test function.
+func noTestModules(out string) []string {
+	var mods []string
+	for _, line := range strings.Split(out, "\n") {
+		if name, ok := strings.CutPrefix(line, "NO-TESTS "); ok {
+			mods = append(mods, name)
+		}
+	}
+	return mods
 }
 
 func copyFile(from, to string) error {
@@ -523,6 +542,9 @@ for _, entry in modules do
 		end
 	end
 	table.sort(names)
+	if #names == 0 then
+		print("NO-TESTS " .. entry[1])
+	end
 	for _, name in names do
 		print("RUN " .. name)
 		local ok, err = pcall(mod[name])
