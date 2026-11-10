@@ -276,13 +276,6 @@ local function parse128(text: string): any
 	return acc
 end
 
-local function floor128(x: any): integer
-	if Int128.cmp(x, Int128.from64(0i)) < 0 then
-		return Int128.neg(Int128.floor(Int128.neg(x)))
-	end
-	return Int128.floor(x)
-end
-
 -- ---------------------------------------------------------------------------
 -- Helpers for accepted/refused record checks (STANDARD.md, What a runner
 -- checks).
@@ -301,12 +294,6 @@ local function checkTerminal(r: any, op: string, args: { any })
 	check(failed, "a refused stream is not terminal")
 	check(r:bitsProcessed() == before, "a read after a refusal consumed bits")
 	check(h.value == UNTOUCHED, "a read after a refusal wrote its destination")
-end
-
-local function runAcceptRead(r: any, rec: any, want: any, reader: (any) -> boolean)
-	check(reader(r), rec.name .. ": accepted read refused (" .. tostring(r:error()) .. ")")
-	check(r:bitsProcessed() == rec.consumed,
-		rec.name .. ": consumed " .. tostring(r:bitsProcessed()) .. " != " .. tostring(rec.consumed))
 end
 
 -- ---------------------------------------------------------------------------
@@ -624,10 +611,6 @@ local function runIntRelative(r: any, rec: any)
 		w:flush()
 		check(sameBytes(rec.bytes, w:data()), rec.name .. ": int_relative writer bytes mismatch")
 	end
-end
-
-local function missingFamily(op: string)
-	fail("operation " .. op .. " has no runner: src/serialize_" .. op .. ".luau is absent")
 end
 
 local function runFixed(r: any, rec: any)

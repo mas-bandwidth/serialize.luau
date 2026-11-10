@@ -9,8 +9,7 @@
 -- method into its family module. A family module (src/serialize_<name>.luau,
 -- one per card, DESIGN.md (h)) is required LAZILY, on the first call that
 -- needs it, so each family card creates its own file and no two cards edit
--- one file. While a family's file is absent its methods raise
--- `serialize: <name> not implemented`.
+-- one file.
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 
@@ -94,11 +93,7 @@ local function family(name: string): any
 		return requireFamily("./serialize_" .. name)
 	end)
 	if not ok then
-		local message = tostring(result)
-		if string.find(message, 'could not resolve child component "serialize_' .. name .. '"', 1, true) then
-			error("serialize: " .. name .. " not implemented (src/serialize_" .. name .. ".luau is absent)", 2)
-		end
-		error(result, 0)
+		error("serialize: " .. name .. " not implemented (src/serialize_" .. name .. ".luau is absent): " .. tostring(result), 2)
 	end
 	families[name] = result
 	return result
@@ -607,12 +602,8 @@ function MeasureStream.reset(self: any)
 	self._error = nil
 end
 
--- _measure adds bits to the count. A measure never latches (U6), so the
--- latch test is never true here; it is kept for the shared arm shape.
+-- _measure adds bits to the count. A measure never latches (U6).
 function MeasureStream._measure(self: any, bits: number): boolean
-	if self._error ~= nil then
-		return false
-	end
 	self._bits += bits
 	return true
 end

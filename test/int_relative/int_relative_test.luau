@@ -124,10 +124,6 @@ local function bytesOf(hex: string): buffer
 	return buffer.fromstring(table.concat(chars))
 end
 
-local function hexOf(data: buffer): string
-	return string.upper(buffer.tostring(data))
-end
-
 local function hexString(data: buffer): string
 	local out = {}
 	for i = 0, buffer.len(data) - 1 do
