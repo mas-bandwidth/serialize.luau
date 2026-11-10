@@ -399,12 +399,14 @@ function M.readString(s: any, holder: any, bufferSize: any): boolean
 		return s:_fail(PastEnd)
 	end
 	local value: string
-	if hasBitpacker then
-		local payload = buffer.create(length)
-		if length > 0 then
-			s:_readBytes(payload, 0, length)
+	if hasBitpacker and length > 0 then
+		local packer = s._packer
+		if packer == nil then
+			packer = Stream.family("bitpacker").BitReader.new(s._data)
+			s._packer = packer
 		end
-		value = buffer.tostring(payload)
+		value = packer:readString(length)
+		s._bits += length * 8
 	else
 		value = buffer.readstring(s._data, s._bits // 8, length)
 		s._bits += length * 8
