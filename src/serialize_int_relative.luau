@@ -1,9 +1,8 @@
 --!strict
 -- serialize_int_relative.luau — int_relative (DESIGN.md (a), (c), (g) and
--- (h); STANDARD.md int_relative), wire compatible with serialize (format
--- version 2.0) and serialize.go v2.0.0 write_stream.go, read_stream.go and
--- measure_stream.go: the same values produce the same bytes and the same
--- refusals.
+-- (h); STANDARD.md int_relative), wire compatible with mas-bandwidth/serialize
+-- (C++) v2.1.3 (format version 2.0): the same values produce the same bytes
+-- and the same refusals.
 --
 -- int_relative encodes an increasing sequence compactly: a ladder of one-bit
 -- "does it fit in this tier?" flags, then the difference in the first tier it

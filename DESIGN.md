@@ -13,18 +13,18 @@ after its top-level object, the int_relative absolute tier is canonical, and
 wstring is gone. Format 1.1 was this library's first wire; 2.0 keeps every
 byte of every finite value 1.1 could carry.
 
-**The oracle.** serialize.go v2.0.0 (module `github.com/mas-bandwidth/serialize.go/v2`,
-`a3ffd9136906dfc4db5b2fb6d146181d749b00c5`) is the reference implementation, matched byte for byte, refusal for
+**The reference implementation.** mas-bandwidth/serialize (C++) v2.1.3 is the
+reference implementation, matched byte for byte, refusal for
 refusal, reason for reason. serialize.js (`ff765a1a89a89dc3f6e818e553baabf189241b4e`)
 is the closest worked example and supplies the spelling. Both are read, never
 imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/*.txt`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.1
-(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`; format 2.0, standard 2.1 with the 2.1.1 rulings, U3, U6, U9 and U15: the
+VERBATIM from mas-bandwidth/serialize at tag v2.1.3
+(format 2.0, standard 2.1 with the 2.1.1 rulings, U3, U6, U9 and U15: the
 `rejected` refusal reason and its `reject` vectors) by
-`tools/revendor/revendor.sh v2.1.1`,
+`tools/revendor/revendor.sh v2.1.3`,
 which diffs them against the tag's own copies. CI's corpus job diffs all
 four against the pin on every run. None is edited here; a change arrives by
 re-vendoring from a new tag or commit.
@@ -37,7 +37,7 @@ re-vendoring from a new tag or commit.
 
 `local serialize = require("./serialize")` returns a frozen table. Names are
 serialize.js's spelling (src/index.js, src/streams.js) of everything
-serialize.go v2.0.0 exports. Values move through HOLDERS, `{ value = ... }`,
+the reference exports. Values move through HOLDERS, `{ value = ... }`,
 as serialize.js's refs do: a write reads `holder.value`, a read assigns it only
 on success. Every serialize method returns a boolean: `true` on success,
 `false` on a refusal.
@@ -164,9 +164,9 @@ inverse polarity. A loop driven by either always terminates on hostile data.
 Deviations from serialize.js's spelling, each with its reason:
 
 - `serializeFixed64` and `serializeFixed128`, where serialize.js has one
-  `serializeFixed`: Go's two entry points have different holders (integer and
-  Int128) and different Q rules (a sum of at most 64, a sum of exactly 128), and
-  Go is the oracle.
+  `serializeFixed`: the reference has two entry points with different holders
+  (integer and Int128) and different Q rules (a sum of at most 64, a sum of
+  exactly 128), and the reference is the oracle.
 - `serializeObject`, `serializeCompressedFloatPrecomputed`, `setContext`,
   `context`, `Continue`, `Until`, `Int128`, `Uint128`,
   `compressedFloatParams` and `signedToUnsigned` exist in Go and not in
@@ -354,7 +354,7 @@ float32 ruling, 2026-10-17):
   float32 operation, in serialize.go's order. Write: `n = fround(fround(v - min) / delta)`, clamped with the `not (n >= 0)` / `not (n <= 1)` form, then
   `math.floor(fround(fround(n * fround(maxIntegerValue)) + 0.5))`, then the
   integer clamp to `maxIntegerValue`. The `+ 0.5` is a float32 add: serialize.go
-  v1.15.1 write_stream.go:386 (v2.0.0 keeps it) is `uint32(math.Floor(float64(float32(n*float32(m))
+  v1.15.1 write_stream.go:386 (the reference keeps it) is `uint32(math.Floor(float64(float32(n*float32(m))
   + 0.5)))`, and STANDARD.md, compressed_float, says the product rounds to float32 before 0.5 is added and "that sum rounds to float32 before the floor" (two roundings, so a float64 add is wrong: m = 16777215, n = 8388609/16777215 writes 8388610 in Go, 8388609 with a float64 add). A non-finite input value (NaN, +inf, -inf) RAISES on write, `serialize:
   compressed float value must be finite`, before the latch check and before any arithmetic: STANDARD.md, compressed_float, Non-finite inputs are non-conforming ("should assert out on write too"), the same rule in the Luau, Lua and Squirrel ports. Go clamps a NaN to 0 here; this port does not, the one deliberate deviation from serialize.go's write arm, for STANDARD.md's ruling. The measure arm makes the same check, by the same trap (U6); the read arm never sees the value. A declaration whose `delta` or `delta / resolution` is not finite in float32, or whose top integer decodes past FLT_MAX (`fround(min + delta)` not finite), traps on write and measure (IMPLEMENTING.md, "The check model"; U9), and `compressedFloatParams` traps on the first two as the reference's `compressed_float_params` asserts them. The read path is untouched by both: it clamps the declaration and refuses a non-finite decode at runtime. Read: `fround(fround(fround(i) /
   fround(maxIntegerValue)) * delta)` then `fround(that + min)`, and a decode that is not finite is refused as `NonFiniteFloat`, the holder unwritten, whatever the declaration (STANDARD.md, "The decode must be finite"). Params:
@@ -395,9 +395,9 @@ paragraph:
 
 ## (g) WRITER AND READER
 
-**The writer is STRICT.** It writes exactly serialize.go v2.0.0's bytes for
+**The writer is STRICT.** It writes exactly the reference's bytes for
 the same values. Every write misuse traps (a; IMPLEMENTING.md U9), where
-serialize.go v2.0.0's WriteStream returned a reason or panicked, and latches
+the reference's WriteStream returned a reason or panicked, and latches
 nothing. It writes nothing on a trap: every bounds check is of the whole
 operation's width before any bit moves (a trapped wide write leaves no
 dangling low dword). `serializeString` traps on a payload a reader would
@@ -542,11 +542,13 @@ The stream itself implements `serializeAlign`, `serializeEnd`,
 ### Dependencies between families
 
 A literal require of an absent file fails luau-analyze, so a family that
-requires another depends on that card: int and int128 require bits (for
-`bitsRequired`/`bitsRequired64`); fixed requires bits and int128;
-compressed_float requires bits and float. Every family's tests need
-bitpacker at run time (the stream packs through it), so every family card
-depends on serialize-luau-bitpacker.
+requires another depends on that card: compressed_float requires bits and
+float. int, int128, fixed and bits require no family module of their own:
+int, int128 and fixed carry the helpers they need inline (`bitsRequired`/
+`bitsRequired64` and the Uint128 pair arithmetic), bits defines them directly,
+and int_relative requires none either. float, compressed_float and bytes
+require stream. Every family's tests need bitpacker at run time (the stream
+packs through it), so every family card depends on serialize-luau-bitpacker.
 
 ## (i) THE RUNNER
 
@@ -590,7 +592,7 @@ depends on serialize-luau-bitpacker.
   requires the record's bytes; names are unique across the corpus. Each
   record runs on its own and every failing record is reported by name.
 - THE NEGATIVE CONTROLS: `make controls` (`tools/luaurun -controls`) runs every
-  control of `tools/controls/controls.tsv`, all 17 the reference names. Each
+  control of `tools/controls/controls.tsv`, all 19 the reference names. Each
   builds the conformance unit with ONE refusal rule deleted from a copy of the
   source (each needle must occur exactly once, else the control is red; a rule
   kept in several places, the ranged offset and its reconstruction in

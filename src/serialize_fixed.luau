@@ -5,8 +5,8 @@
 -- the stored integer the real value scaled by 2^fraction_bits, min and max
 -- whole-unit bounds. The encoding is an offset encoding over the RAW (scaled)
 -- bounds, byte identical to serializeInt64 / serializeInt128 of the raw value
--- over the raw bounds (STANDARD.md fixed; serialize.go fixedPointParams64/128
--- and SerializeFixed64/128, v2.0.0).
+-- over the raw bounds (STANDARD.md fixed; mas-bandwidth/serialize (C++)
+-- fixedPointParams64/128 and SerializeFixed64/128, v2.1.3).
 --
 -- This card lands without serialize_bits / serialize_int / serialize_int128
 -- (they are not yet on the base branch), so the helpers this family needs —

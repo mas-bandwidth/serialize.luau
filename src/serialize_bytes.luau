@@ -2,15 +2,17 @@
 -- serialize_bytes.luau — bytes and string (DESIGN.md (g) and (h);
 -- STANDARD.md, Bytes and Strings, Reader Obligations, The vector format).
 --
--- Wire compatible with serialize.go v2.0.0: the same values produce the same
--- bytes, every refusal STANDARD.md and serialize.go state is made, a refusal
--- writes nothing (the whole operation's width is checked before any bit
--- moves), reads never go past the data's end and hostile bytes never raise.
+-- Wire compatible with mas-bandwidth/serialize (C++) v2.1.3: the same values
+-- produce the same bytes, every refusal STANDARD.md and serialize.go state is
+-- made, a refusal writes nothing (the whole operation's width is checked
+-- before any bit moves), reads never go past the data's end and hostile bytes
+-- never raise.
 --
--- The stream's bit I/O is reached through Luau's buffer bit operations
--- (buffer.readbits/writebits, little-endian and LSB-first, the format's own
--- order) because this card's base has no serialize_bitpacker.luau. The
--- arms use only the buffer the stream already holds and its bit accounting.
+-- The stream's bit I/O goes through its own primitives when the bitpacker
+-- family is present (s:_writeBits/s:_readBits, little-endian and LSB-first,
+-- the format's own order), and falls back to Luau's buffer bit operations
+-- (buffer.readbits/writebits) when it is absent. The arms use only the buffer
+-- the stream already holds and its bit accounting.
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 

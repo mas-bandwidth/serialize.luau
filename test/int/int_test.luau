@@ -8,7 +8,7 @@
 -- measure count, the reader's value and bits consumed, and a refusal's
 -- destination and terminality. The edge cases are serialize.go v1.15.1's
 -- TestBitsRequired, TestBitsRequired64 and TestSerializeInt64FullRange, plus
--- the writer's ValueOutOfRange latch one past each bound.
+-- the write-misuse trap one past each bound.
 
 local serialize = require("./serialize")
 local int = require("./serialize_int")

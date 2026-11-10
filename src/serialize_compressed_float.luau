@@ -1,7 +1,8 @@
 --!strict
 -- serialize_compressed_float.luau — the compressed_float family (DESIGN.md
 -- (a), (e), (g) and (h); STANDARD.md, Floating Point, "compressed_float"): a
--- float quantized to a resolution, wire compatible with serialize.go v2.0.0.
+-- float quantized to a resolution, wire compatible with
+-- mas-bandwidth/serialize (C++) v2.1.3.
 --
 -- The wire constants come from CompressedFloatParams (serialize.go stream.go):
 -- delta = max - min, values = delta / res clamped to [1, 4294967040],
@@ -35,8 +36,8 @@ local Stream = require("./serialize_stream")
 local fround = Float.fround
 local bitsRequired = Bits.bitsRequired
 
--- Raise messages for API misuse: serialize.go's panic strings (serialize.go
--- v2.0.0 serialize.go; DESIGN.md (a) and (g)), plus STANDARD.md's non-finite
+-- Raise messages for API misuse: serialize.go's panic strings (serialize.go;
+-- DESIGN.md (a) and (g)), plus STANDARD.md's non-finite
 -- write raise.
 local RAISE_FLOAT_PARAMS = "serialize: compressed float requires min < max and resolution > 0"
 local RAISE_PRECOMPUTED = "serialize: precomputed compressed float constants must be exactly what CompressedFloatParams derives"
