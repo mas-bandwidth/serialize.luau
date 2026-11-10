@@ -365,11 +365,18 @@ function M.readString(s: any, holder: any, bufferSize: any): boolean
 	if s._bits + length * 8 > s._numBits then
 		return s:_fail(PastEnd)
 	end
-	local payload = buffer.create(length)
+	local value: string
 	if length > 0 then
-		s:_readBytes(payload, 0, length)
+		local packer = s._packer
+		if packer == nil then
+			packer = Stream.family("bitpacker").BitReader.new(s._data)
+			s._packer = packer
+		end
+		value = packer:readString(length)
+	else
+		value = buffer.readstring(s._data, s._bits // 8, 0)
 	end
-	local value = buffer.tostring(payload)
+	s._bits += length * 8
 	local refusal = textRefusal(value)
 	if refusal ~= nil then
 		return s:_fail(refusal)

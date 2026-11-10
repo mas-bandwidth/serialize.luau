@@ -14,6 +14,11 @@
 -- The reset-reuse change was measured with this bench (20000 packets, five
 -- paired runs pinned to one core, best of each run): write 13043 -> 12094
 -- ns/pkt and read 9202 -> 8785 ns/pkt; wire-hash and read-checksum unchanged.
+--
+-- The bulk byte-copy change was measured with this bench (20000 packets, five
+-- runs pinned to one core, best of each side): write 13951 -> 13966 ns/pkt
+-- (unchanged within run noise) and read 10143 -> 7576 ns/pkt; wire-hash and
+-- read-checksum unchanged.
 
 local serialize = require("../src/serialize")
 
