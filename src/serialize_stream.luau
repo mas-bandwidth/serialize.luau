@@ -9,8 +9,8 @@
 -- method into its family module. A family module (src/serialize_<name>.luau,
 -- one per card, DESIGN.md (h)) is required LAZILY, on the first call that
 -- needs it, so each family card creates its own file and no two cards edit
--- one file. While a family's file is absent its methods raise
--- `serialize: <name> not implemented`.
+-- one file. While a family's file is absent its methods raise the require
+-- error naming that module.
 --
 -- Copyright © 2016 - 2026, Más Bandwidth LLC. BSD 3-Clause (see LICENSE).
 
@@ -90,16 +90,7 @@ local function family(name: string): any
 	if string.match(name, "^[a-z][a-z0-9_]*$") == nil then
 		error("serialize: family name " .. string.format("%q", name) .. " is not a family module name", 2)
 	end
-	local ok, result = pcall(function()
-		return requireFamily("./serialize_" .. name)
-	end)
-	if not ok then
-		local message = tostring(result)
-		if string.find(message, 'could not resolve child component "serialize_' .. name .. '"', 1, true) then
-			error("serialize: " .. name .. " not implemented (src/serialize_" .. name .. ".luau is absent)", 2)
-		end
-		error(result, 0)
-	end
+	local result = requireFamily("./serialize_" .. name)
 	families[name] = result
 	return result
 end
