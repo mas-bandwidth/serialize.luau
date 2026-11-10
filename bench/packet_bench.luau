@@ -19,6 +19,11 @@
 -- runs pinned to one core, best of each side): write 13951 -> 13966 ns/pkt
 -- (unchanged within run noise) and read 10143 -> 7576 ns/pkt; wire-hash and
 -- read-checksum unchanged.
+--
+-- The shared float scratch buffer was measured with this bench (20000
+-- packets, seven interleaved runs pinned to one core, median of each run's
+-- best): write 9733.6 -> 8891.5 ns/pkt and read 5631.9 -> 4952.0 ns/pkt;
+-- wire-hash and read-checksum unchanged.
 
 local serialize = require("../src/serialize")
 
