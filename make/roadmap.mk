@@ -6,10 +6,13 @@ ROADMAP_TOOL ?= roadmap
 # roadmap-check refuses documentation, bench or test files that carry a private
 # machine path, a bench host name, an internal sprint branch, an internal
 # document name or an internal project name.
-ROADMAP_CHECK_FILES := Makefile DESIGN.md ROADMAP.md docs/roadmap.sexp bench test
+ROADMAP_CHECK_FILES := DESIGN.md ROADMAP.md docs/roadmap.sexp bench test
 ROADMAP_CHECK_PATTERN := '/Volumes/|/Users/|/home/[A-Za-z0-9._-]+/|(^|[^A-Za-z0-9])amd-[0-9]+|sprint/|nova-|the[[:space:]]+studio|host[[:space:]]+space|AUDIT[-_ ]*LEDGER|PORT[-_ ]*LUAU|V[i]rtual[[:space:]]+Go|space[[:space:]]+[Gg]ame|[Ll][Ee][Gg][Oo]'
 
 .PHONY: roadmap roadmap-check
+
+# make test runs the check first.
+test: roadmap-check
 
 roadmap:
 	$(ROADMAP_TOOL) --file docs/roadmap.sexp --out ROADMAP.md

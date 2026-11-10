@@ -410,4 +410,65 @@ function tests.TestIntBoundsTrap()
 	end
 end
 
+
+-- Go math/big.Int.QuoRem reference values (decimal), with quotient reduced
+-- modulo 2^128 and interpreted signed. QuoRem truncates toward zero.
+function tests.TestInt128SignedDivision()
+	local cases = {
+		{ "7", "3", "2", "1" },
+		{ "-7", "3", "-2", "-1" },
+		{ "7", "-3", "-2", "1" },
+		{ "-7", "-3", "2", "-1" },
+		{ "-6", "2", "-3", "0" },
+		{ "6", "-2", "-3", "0" },
+		{ "-6", "-2", "3", "0" },
+		{ "1", "-3", "0", "1" },
+		{ "-1", "3", "0", "-1" },
+		{ "0", "-3", "0", "0" },
+		{ "18446744073709551617", "3", "6148914691236517205", "2" },
+		{ "-18446744073709551617", "3", "-6148914691236517205", "-2" },
+		{ "18446744073709551617", "-18446744073709551616", "-1", "1" },
+		{ "-170141183460469231731687303715884105728", "-1", "-170141183460469231731687303715884105728", "0" },
+		{ "-170141183460469231731687303715884105728", "3", "-56713727820156410577229101238628035242", "-2" },
+		{ "170141183460469231731687303715884105727", "-3", "-56713727820156410577229101238628035242", "1" },
+		{ "-170141183460469231731687303715884105728", "-170141183460469231731687303715884105728", "1", "0" },
+	}
+	for _, c in cases do
+		local a, b = parse128(c[1]), parse128(c[2])
+		local expectedQ, expectedR = parse128(c[3]), parse128(c[4])
+		local q, r = Int128.divMod(a, b)
+		expectPair(q, expectedQ, c[1] .. " / " .. c[2])
+		expectPair(r, expectedR, c[1] .. " % " .. c[2])
+		expectPair(Int128.div(a, b), expectedQ, "div quotient")
+		expectPair(Int128.mod(a, b), expectedR, "mod remainder")
+		expectPair(Int128.add(Int128.mul(q, b), r), a, "quotient reconstruction")
+	end
+end
+
+function tests.TestInt128ZeroDivisors()
+	local zero = Int128.new(0i, 0i)
+	for _, cls in { Int128, int128.Uint128 } do
+		for _, a in { zero, Int128.from64(1i), Int128.from64(-1i) } do
+			for _, operation in { cls.divMod, cls.div, cls.mod } do
+				local ok, message = pcall(operation, a, zero)
+				if ok or not string.find(tostring(message), "division by zero", 1, true) then
+					fail("division by zero must raise its error")
+				end
+			end
+		end
+	end
+end
+
+function tests.TestUint128Division()
+	local U = int128.Uint128
+	-- Unsigned full-width inputs retain unsigned quotient/remainder semantics.
+	local a = U.new(0xffffffffffffffffi, 0xffffffffffffffffi)
+	local b = U.new(0i, 0x8000000000000000i)
+	local q, r = U.divMod(a, b)
+	expectPair(q, U.new(1i, 0i), "unsigned high divisor quotient")
+	expectPair(r, U.new(0xffffffffffffffffi, 0x7fffffffffffffffi), "unsigned high divisor remainder")
+	expectPair(U.div(a, b), q, "unsigned div")
+	expectPair(U.mod(a, b), r, "unsigned mod")
+end
+
 return tests
