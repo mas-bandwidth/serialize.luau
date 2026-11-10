@@ -148,11 +148,9 @@ end
 local function writeProgram(prog)
 	local buf = buffer.create(BUFSIZE)
 	local ws = S.WriteStream.new(buf)
-	local lastop = "?"
 	for _, st in ipairs(prog) do
 		local op = st.op
 		local w = st.words
-		lastop = op
 		if op == "b" then
 			ws:serializeBits({ value = w[1] }, st.bits)
 		elseif op == "b64" then
@@ -202,17 +200,10 @@ local function writeProgram(prog)
 				end,
 			})
 		end
-		if not ws:ok() then
-			break
-		end
 	end
 	ws:serializeEnd()
 	ws:flush()
-	local data = ws:data()
-	if ws:ok() then
-		return data, nil
-	end
-	return data, ws:error() .. " " .. lastop
+	return ws:data(), nil
 end
 
 local function readProgram(prog, data)

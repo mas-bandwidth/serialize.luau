@@ -104,11 +104,11 @@ function T.TestSmoke()
 		serialize.WriteStream.new(buffer.create(5))
 	end, "serialize: bit writer buffer size must be a multiple of 8 bytes")
 
-	-- THE LAZY DISPATCH: a family whose file is absent raises its
-	-- not-implemented error by name, on the first call that needs it.
+	-- THE LAZY DISPATCH: a family whose file is absent raises the require
+	-- error naming its module, on the first call that needs it.
 	raises(function()
 		require("./serialize_stream").family("smoke_absent")
-	end, "serialize: smoke_absent not implemented")
+	end, 'could not resolve child component "serialize_smoke_absent"')
 	-- A family name that is not a module name never reaches require.
 	raises(function()
 		require("./serialize_stream").family("../serialize_stream")
@@ -174,6 +174,37 @@ function T.TestSmoke()
 	raises(function()
 		(require :: any)("../serialize_stream")
 	end, "SHADOW serialize_stream.luau loaded from outside the unit")
+end
+
+function T.TestStreamResetReusesPackers()
+	local serialize = require("./serialize")
+	local first = buffer.create(8)
+	local second = buffer.create(16)
+	local w = serialize.WriteStream.new(first)
+	check(w._packer == nil, "writer starts lazy")
+	check(w:serializeBits({ value = 7 }, 3), "first write")
+	local writer = w._packer
+	w:reset(second)
+	check(w._packer == writer, "writer reset keeps packer identity")
+	check(w:bitsProcessed() == 0 and w:bitsAvailable() == 128, "writer cursor resets")
+	check(w:serializeBits({ value = 0xA6 }, 8), "second write")
+	w:flush()
+	check(buffer.readu8(second, 0) == 0xA6, "writer clears scratch and changes buffer")
+	w:reset(first)
+	check(w._packer == writer, "writer repeated reset keeps packer identity")
+
+	buffer.writeu8(first, 0, 7)
+	local r = serialize.ReadStream.new(first)
+	check(r._packer == nil, "reader starts lazy")
+	check(r:serializeBits({ value = 0 }, 3), "first read")
+	local reader = r._packer
+	r:reset(second)
+	check(r._packer == reader, "reader reset keeps packer identity")
+	local value = { value = 0 }
+	check(r:bitsProcessed() == 0 and r:serializeBits(value, 8), "reader cursor resets")
+	check(value.value == 0xA6, "reader clears scratch and changes buffer")
+	r:reset(first)
+	check(r._packer == reader, "reader repeated reset keeps packer identity")
 end
 
 return T

@@ -182,6 +182,24 @@ func genProgram(r *rand.Rand) program {
 				st.words = []uint32{uint32(mn), uint32(mn), uint32(mn)}
 				break
 			}
+			if r.IntN(8) == 0 {
+				// A negative bound with a span of at least 2^31.
+				mn64 := -1 - int64(r.Uint32()&0x7fffffff)
+				maxSpan := int64(math.MaxInt32) - mn64
+				span64 := int64(1)<<31 + int64(r.Uint64()%uint64(maxSpan-(int64(1)<<31)+1))
+				mx64 := mn64 + span64
+				var v64 int64
+				switch r.IntN(10) {
+				case 0:
+					v64 = mn64
+				case 1:
+					v64 = mx64
+				default:
+					v64 = mn64 + int64(r.Uint64()%uint64(span64+1))
+				}
+				st.words = []uint32{uint32(int32(v64)), uint32(int32(mn64)), uint32(int32(mx64))}
+				break
+			}
 			span := r.Uint32() & 0x3fffffff
 			mx := mn + int32(span)
 			var v int32
@@ -200,6 +218,9 @@ func genProgram(r *rand.Rand) program {
 				l0, l1 := w64(uint64(mn))
 				st.words = []uint32{l0, l1, l0, l1, l0, l1}
 				break
+			}
+			if r.IntN(8) == 0 {
+				mn = -mn - 1
 			}
 			span := r.Uint64() & 0x3fffffffffffffff
 			mx := mn + int64(span)
@@ -224,6 +245,36 @@ func genProgram(r *rand.Rand) program {
 				st.words = append(st.words, w[:]...)
 				st.words = append(st.words, w[:]...)
 				st.words = append(st.words, w[:]...)
+				break
+			}
+			if r.IntN(4) == 0 {
+				// A range outside 63 bits: the high lane is nonzero, on
+				// either side of zero, and the span stays on that side.
+				var mn serialize.Int128
+				var span serialize.Uint128
+				if r.IntN(2) == 0 {
+					mn = serialize.Int128{Lo: r.Uint64(), Hi: uint64(1 + r.IntN(1024))}
+					span = serialize.Uint128{Lo: r.Uint64(), Hi: uint64(r.IntN(1024))}
+				} else {
+					mn = serialize.Int128{Lo: r.Uint64(), Hi: uint64(-1025 - int64(r.IntN(1024)))}
+					span = serialize.Uint128{Lo: r.Uint64(), Hi: uint64(r.IntN(512))}
+				}
+				mx := mn.Add(span.Int128())
+				var v serialize.Int128
+				switch r.IntN(10) {
+				case 0:
+					v = mn
+				case 1:
+					v = mx
+				default:
+					v = mn.Add(span.Rsh(1).Int128())
+				}
+				wv := wI128(v)
+				wm := wI128(mn)
+				wx := wI128(mx)
+				st.words = append(st.words, wv[:]...)
+				st.words = append(st.words, wm[:]...)
+				st.words = append(st.words, wx[:]...)
 				break
 			}
 			span := r.Uint64() & 0x3fffffffffffffff
@@ -274,11 +325,18 @@ func genProgram(r *rand.Rand) program {
 			x0, x1 := w64(uint64(max))
 			st.words = []uint32{wv[0], wv[1], wv[2], wv[3], uint32(integerBits), uint32(f), m0, m1, x0, x1}
 		case "cf":
-			min := float32(-8)
-			max := float32(8)
-			res := float32(0.25)
-			value := min + float32(r.IntN(65))*res
-			st.words = []uint32{math.Float32bits(value), math.Float32bits(min), math.Float32bits(max), math.Float32bits(res)}
+			decls := []struct {
+				min, max, res float32
+				steps         int
+			}{
+				{-8, 8, 0.25, 64},
+				{-64, 64, 0.5, 256},
+				{0, 256, 2, 128},
+				{-1024, 1024, 8, 256},
+			}
+			d := decls[r.IntN(len(decls))]
+			value := d.min + float32(r.IntN(d.steps+1))*d.res
+			st.words = []uint32{math.Float32bits(value), math.Float32bits(d.min), math.Float32bits(d.max), math.Float32bits(d.res)}
 		case "ir":
 			prev := int32(r.Uint32() & 0x7ffffffe)
 			cur := prev + int32(1+r.Uint64()%uint64(0x7fffffff-int32(prev)))
@@ -320,6 +378,9 @@ func genProgram(r *rand.Rand) program {
 			st.words = []uint32{lo, hi}
 		case "by":
 			l := 1 + r.IntN(64)
+			if r.IntN(8) == 0 {
+				l = 0
+			}
 			b := make([]byte, l)
 			for i := range b {
 				b[i] = byte(r.Uint64() >> 56)
@@ -331,6 +392,9 @@ func genProgram(r *rand.Rand) program {
 			// UTF-8 refusal
 			st.bufsize = 2 + r.IntN(100)
 			l := 1 + r.IntN(st.bufsize-1)
+			if r.IntN(8) == 0 {
+				l = 0
+			}
 			var b []byte
 			for len(b) < l {
 				c := []byte(pick(r, textPool))
@@ -366,6 +430,69 @@ func genProgram(r *rand.Rand) program {
 	return p
 }
 
+// TestGeneratorCoverage checks the generator reaches the ranges and shapes
+// the differential is meant to compare, under the default seed: a negative
+// integer bound, a span of at least 2^31, an int128 range outside 63 bits,
+// zero-length bytes and strings, and more than one compressed_float
+// declaration.
+func TestGeneratorCoverage(t *testing.T) {
+	r := rand.New(rand.NewPCG(defaultSeed, seedStream))
+	var negBound, wideSpan, wide128, emptyBytes, emptyString bool
+	cfDecls := map[[3]uint32]bool{}
+	for i := 0; i < 2000; i++ {
+		p := genProgram(r)
+		for _, st := range p.steps {
+			switch st.op {
+			case "i":
+				mn, mx := int32(st.words[1]), int32(st.words[2])
+				if mn < 0 {
+					negBound = true
+				}
+				if int64(mx)-int64(mn) >= int64(1)<<31 {
+					wideSpan = true
+				}
+			case "i64":
+				mn := int64(s64(st.words[2], st.words[3]))
+				if mn < 0 {
+					negBound = true
+				}
+			case "i128":
+				if st.words[6] != 0 || st.words[7] != 0 || st.words[10] != 0 || st.words[11] != 0 {
+					wide128 = true
+				}
+			case "by":
+				if st.hex == "" {
+					emptyBytes = true
+				}
+			case "s":
+				if st.hex == "" {
+					emptyString = true
+				}
+			case "cf":
+				cfDecls[[3]uint32{st.words[1], st.words[2], st.words[3]}] = true
+			}
+		}
+	}
+	if !negBound {
+		t.Error("generator produced no negative integer bound")
+	}
+	if !wideSpan {
+		t.Error("generator produced no span of at least 2^31")
+	}
+	if !wide128 {
+		t.Error("generator produced no int128 range outside 63 bits")
+	}
+	if !emptyBytes {
+		t.Error("generator produced no zero-length bytes")
+	}
+	if !emptyString {
+		t.Error("generator produced no zero-length string")
+	}
+	if len(cfDecls) < 2 {
+		t.Errorf("generator produced %d compressed_float declarations, want at least 2", len(cfDecls))
+	}
+}
+
 // textPool is the characters a generated string is made of: ASCII, a two-byte
 // accent, a combining mark, CJK, Korean, Arabic, U+FFFF, an emoji and the
 // largest code point.
@@ -394,8 +521,10 @@ func refusalTok(err error) string {
 func canonicalOf(st step) string {
 	w := st.words
 	switch st.op {
-	case "b", "u8", "u16", "u32", "i":
+	case "b", "u8", "u16", "u32":
 		return tokU(uint64(w[0]))
+	case "i":
+		return tokD(int64(int32(w[0])))
 	case "ir":
 		return tokD(int64(int32(w[1])))
 	case "b64", "u64", "i64":
@@ -815,7 +944,14 @@ func (st step) text() string {
 		if st.op == "s" {
 			sb.WriteString(" " + strconv.Itoa(st.bufsize))
 		}
-		sb.WriteString(" " + st.hex)
+		// An empty payload still needs a token in the line: the driver
+		// derives the byte count from the token's hex length, so a lone
+		// "-" (no hex digits) reads back as zero bytes.
+		hex := st.hex
+		if hex == "" {
+			hex = "-"
+		}
+		sb.WriteString(" " + hex)
 	} else {
 		for _, v := range st.words {
 			sb.WriteString(" " + strconv.FormatUint(uint64(v), 10))

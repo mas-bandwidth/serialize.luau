@@ -13,31 +13,30 @@ after its top-level object, the int_relative absolute tier is canonical, and
 wstring is gone. Format 1.1 was this library's first wire; 2.0 keeps every
 byte of every finite value 1.1 could carry.
 
-**The oracle.** serialize.go v2.0.0 (module `github.com/mas-bandwidth/serialize.go/v2`,
-`a3ffd9136906dfc4db5b2fb6d146181d749b00c5`) is the reference implementation, matched byte for byte, refusal for
+**The reference implementation.** mas-bandwidth/serialize (C++) v2.1.3 is the
+reference implementation, matched byte for byte, refusal for
 refusal, reason for reason. serialize.js (`ff765a1a89a89dc3f6e818e553baabf189241b4e`)
 is the closest worked example and supplies the spelling. Both are read, never
 imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/*.txt`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.1
-(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`; format 2.0, standard 2.1 with the 2.1.1 rulings, U3, U6, U9 and U15: the
+VERBATIM from mas-bandwidth/serialize at tag v2.1.3
+(format 2.0, standard 2.1 with the 2.1.1 rulings, U3, U6, U9 and U15: the
 `rejected` refusal reason and its `reject` vectors) by
-`tools/revendor/revendor.sh v2.1.1`,
+`tools/revendor/revendor.sh v2.1.3`,
 which diffs them against the tag's own copies. CI's corpus job diffs all
 four against the pin on every run. None is edited here; a change arrives by
 re-vendoring from a new tag or commit.
 
-**The pin.** Luau 0.741, the same pin as schema's Luau leg (schema
-`docs/PORT-LUAU.md`, branch `sprint/schema-luau-port-design.w1.g1.e21`,
-`448797ed5e8721783a570a47dd0dde02889624c3`): `make dist-luau`, (i).
+**The pin.** Luau 0.741, the same pin as the companion Luau port (its design
+notes, commit `448797ed5e8721783a570a47dd0dde02889624c3`): `make dist-luau`, (i).
 
 ## (a) THE API
 
 `local serialize = require("./serialize")` returns a frozen table. Names are
 serialize.js's spelling (src/index.js, src/streams.js) of everything
-serialize.go v2.0.0 exports. Values move through HOLDERS, `{ value = ... }`,
+the reference exports. Values move through HOLDERS, `{ value = ... }`,
 as serialize.js's refs do: a write reads `holder.value`, a read assigns it only
 on success. Every serialize method returns a boolean: `true` on success,
 `false` on a refusal.
@@ -164,9 +163,9 @@ inverse polarity. A loop driven by either always terminates on hostile data.
 Deviations from serialize.js's spelling, each with its reason:
 
 - `serializeFixed64` and `serializeFixed128`, where serialize.js has one
-  `serializeFixed`: Go's two entry points have different holders (integer and
-  Int128) and different Q rules (a sum of at most 64, a sum of exactly 128), and
-  Go is the oracle.
+  `serializeFixed`: the reference has two entry points with different holders
+  (integer and Int128) and different Q rules (a sum of at most 64, a sum of
+  exactly 128), and the reference is the oracle.
 - `serializeObject`, `serializeCompressedFloatPrecomputed`, `setContext`,
   `context`, `Continue`, `Until`, `Int128`, `Uint128`,
   `compressedFloatParams` and `signedToUnsigned` exist in Go and not in
@@ -184,6 +183,11 @@ Deviations from serialize.js's spelling, each with its reason:
   operators, and the bitwise ones are spelled `band`, `bor`, `bxor`, `bnot`,
   because `and`, `or` and `not` are Luau keywords (the `integer` library's
   own names): `from64, int64, uint64, int128, uint128, isZero, isNegative, len, cmp, add, sub, mul, divMod, div, mod, neg, bnot, band, bor, bxor, lsh, rsh`, plus `new(lo, hi)`. Every operation returns a fresh pair.
+  `Int128.divMod`, `div`, and `mod` divide signed values, truncating the
+  quotient toward zero; the remainder has the dividend's sign. `Uint128`
+  division is unsigned. Both classes raise on a zero divisor, including
+  zero divided by zero. Arithmetic wraps modulo 2^128, so Int128 MIN / -1
+  returns MIN with a zero remainder.
 
 **Write misuse traps (IMPLEMENTING.md U9, standard 2.1.1).** This port has one
 write-misuse mechanism, the trap, and its trap is a raised Luau error
@@ -282,8 +286,8 @@ The rules for this library:
 
 ## (c) THE NUMBER MODEL
 
-Restated from schema docs/PORT-LUAU.md, 64-BIT AND 128-BIT INTEGERS, with no
-change of substance:
+Restated from the companion Luau port's design notes, 64-BIT AND 128-BIT
+INTEGERS, with no change of substance:
 
 - Luau numbers are doubles. A value of 32 bits or fewer (bits, int, uint8,
   uint16, uint32, int_relative, a quantized compressed float, a length) is a
@@ -309,7 +313,7 @@ change of substance:
 
 ## (d) BYTES
 
-Restated from schema docs/PORT-LUAU.md, BYTE BUFFERS: bytes are Luau's
+Restated from the companion Luau port's design notes, BYTE BUFFERS: bytes are Luau's
 `buffer`, fixed-size, mutable, 0-based, little-endian by definition. The
 library uses `buffer.create`, `len`, `readu8 ... readu32`, `writeu8 ... writeu32`, `readinteger`/`writeinteger` (the 64-bit words), `readf32`,
 `readf64`, `writef32`, `writef64`, `copy`, `fill`, `readstring`/`writestring`
@@ -320,8 +324,8 @@ bytes: `#s` is its byte length; a string holder moves through
 
 ## (e) FLOAT32
 
-Restated from schema docs/PORT-LUAU.md, BYTE BUFFERS (the coordinator's
-float32 ruling, 2026-10-17):
+Restated from the companion Luau port's design notes, BYTE BUFFERS (the
+coordinator's float32 ruling, 2026-10-17):
 
 - Floats are FINITE (STANDARD.md, "Finite values only, every one bit
   exact"): a pattern whose exponent field is all ones (NaN with any payload,
@@ -349,7 +353,7 @@ float32 ruling, 2026-10-17):
   float32 operation, in serialize.go's order. Write: `n = fround(fround(v - min) / delta)`, clamped with the `not (n >= 0)` / `not (n <= 1)` form, then
   `math.floor(fround(fround(n * fround(maxIntegerValue)) + 0.5))`, then the
   integer clamp to `maxIntegerValue`. The `+ 0.5` is a float32 add: serialize.go
-  v1.15.1 write_stream.go:386 (v2.0.0 keeps it) is `uint32(math.Floor(float64(float32(n*float32(m))
+  v1.15.1 write_stream.go:386 (the reference keeps it) is `uint32(math.Floor(float64(float32(n*float32(m))
   + 0.5)))`, and STANDARD.md, compressed_float, says the product rounds to float32 before 0.5 is added and "that sum rounds to float32 before the floor" (two roundings, so a float64 add is wrong: m = 16777215, n = 8388609/16777215 writes 8388610 in Go, 8388609 with a float64 add). A non-finite input value (NaN, +inf, -inf) RAISES on write, `serialize:
   compressed float value must be finite`, before the latch check and before any arithmetic: STANDARD.md, compressed_float, Non-finite inputs are non-conforming ("should assert out on write too"), the same rule in the Luau, Lua and Squirrel ports. Go clamps a NaN to 0 here; this port does not, the one deliberate deviation from serialize.go's write arm, for STANDARD.md's ruling. The measure arm makes the same check, by the same trap (U6); the read arm never sees the value. A declaration whose `delta` or `delta / resolution` is not finite in float32, or whose top integer decodes past FLT_MAX (`fround(min + delta)` not finite), traps on write and measure (IMPLEMENTING.md, "The check model"; U9), and `compressedFloatParams` traps on the first two as the reference's `compressed_float_params` asserts them. The read path is untouched by both: it clamps the declaration and refuses a non-finite decode at runtime. Read: `fround(fround(fround(i) /
   fround(maxIntegerValue)) * delta)` then `fround(that + min)`, and a decode that is not finite is refused as `NonFiniteFloat`, the holder unwritten, whatever the declaration (STANDARD.md, "The decode must be finite"). Params:
@@ -362,8 +366,8 @@ float32 ruling, 2026-10-17):
 
 ## (f) LOADING
 
-Restated from schema docs/PORT-LUAU.md, THE RUNTIME LAYOUT, the Security
-paragraph:
+Restated from the companion Luau port's design notes, THE RUNTIME LAYOUT, the
+Security paragraph:
 
 - The unit directory REPLACES the module search path; it is never prepended
   to it. Luau's `require` has no search path: a bare name is refused by the
@@ -380,9 +384,9 @@ paragraph:
   because luau-analyze refuses a require it cannot resolve, and a family file
   is absent until its card lands.
 - No native modules load: the pinned interpreter has no `package`, `dofile`,
-  `loadfile` or `io` and no C module loader. An embedding host (Virtual Go, the
-  space game, lego) resolves `./` against the unit directory alone and refuses
-  everything else.
+  `loadfile` or `io` and no C module loader. An embedding host (a game engine,
+  an application runtime, or a scripting host) resolves `./` against the unit
+  directory alone and refuses everything else.
 - test/smoke holds it: a shadowing `serialize_stream.luau` planted in the
   working directory, one level above the unit, raises if loaded; the entry
   loads its own, and the control requires the shadow through `../` and sees it
@@ -390,9 +394,9 @@ paragraph:
 
 ## (g) WRITER AND READER
 
-**The writer is STRICT.** It writes exactly serialize.go v2.0.0's bytes for
+**The writer is STRICT.** It writes exactly the reference's bytes for
 the same values. Every write misuse traps (a; IMPLEMENTING.md U9), where
-serialize.go v2.0.0's WriteStream returned a reason or panicked, and latches
+the reference's WriteStream returned a reason or panicked, and latches
 nothing. It writes nothing on a trap: every bounds check is of the whole
 operation's width before any bit moves (a trapped wide write leaves no
 dangling low dword). `serializeString` traps on a payload a reader would
@@ -537,11 +541,13 @@ The stream itself implements `serializeAlign`, `serializeEnd`,
 ### Dependencies between families
 
 A literal require of an absent file fails luau-analyze, so a family that
-requires another depends on that card: int and int128 require bits (for
-`bitsRequired`/`bitsRequired64`); fixed requires bits and int128;
-compressed_float requires bits and float. Every family's tests need
-bitpacker at run time (the stream packs through it), so every family card
-depends on serialize-luau-bitpacker.
+requires another depends on that card: compressed_float requires bits and
+float, and fixed requires bits (`bitsRequired64`) and int128 (the Uint128 pair
+arithmetic). int, int128, bits and int_relative require no family module: int
+carries `bitsRequired`/`bitsRequired64` inline, int128 its own pair arithmetic
+and `bitsRequired128`, and bits defines its helpers directly. float,
+compressed_float and bytes require stream. Every family's tests need bitpacker at run time (the stream
+packs through it), so every family card depends on serialize-luau-bitpacker.
 
 ## (i) THE RUNNER
 
@@ -585,7 +591,7 @@ depends on serialize-luau-bitpacker.
   requires the record's bytes; names are unique across the corpus. Each
   record runs on its own and every failing record is reported by name.
 - THE NEGATIVE CONTROLS: `make controls` (`tools/luaurun -controls`) runs every
-  control of `tools/controls/controls.tsv`, all 17 the reference names. Each
+  control of `tools/controls/controls.tsv`, all 19 the reference names. Each
   builds the conformance unit with ONE refusal rule deleted from a copy of the
   source (each needle must occur exactly once, else the control is red; a rule
   kept in several places, the ranged offset and its reconstruction in

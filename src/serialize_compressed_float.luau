@@ -1,9 +1,10 @@
 --!strict
 -- serialize_compressed_float.luau — the compressed_float family (DESIGN.md
 -- (a), (e), (g) and (h); STANDARD.md, Floating Point, "compressed_float"): a
--- float quantized to a resolution, wire compatible with serialize.go v2.0.0.
+-- float quantized to a resolution, wire compatible with
+-- mas-bandwidth/serialize (C++) v2.1.3.
 --
--- The wire constants come from CompressedFloatParams (serialize.go stream.go):
+-- The wire constants come from CompressedFloatParams (the reference's stream):
 -- delta = max - min, values = delta / res clamped to [1, 4294967040],
 -- max_integer_value = ceil(values) and bits = bits_required(0, max_integer_value),
 -- all computed in float32. Every step of the quantization arithmetic is float32
@@ -14,7 +15,7 @@
 -- A non-finite value (NaN, +Inf, -Inf) traps on write and measure before any
 -- arithmetic, never clamped (STANDARD.md, compressed_float, Non-finite inputs;
 -- IMPLEMENTING.md U9, U6; DESIGN.md (e)) — the one deliberate deviation from
--- serialize.go's write arm, which clamps NaN to 0. The read arm never sees the
+-- the reference's write arm, which clamps NaN to 0. The read arm never sees the
 -- value.
 --
 -- The decode must be finite (STANDARD.md, compressed_float, "The decode must
@@ -35,8 +36,8 @@ local Stream = require("./serialize_stream")
 local fround = Float.fround
 local bitsRequired = Bits.bitsRequired
 
--- Raise messages for API misuse: serialize.go's panic strings (serialize.go
--- v2.0.0 serialize.go; DESIGN.md (a) and (g)), plus STANDARD.md's non-finite
+-- Raise messages for API misuse: serialize.go's panic strings (serialize.go;
+-- DESIGN.md (a) and (g)), plus STANDARD.md's non-finite
 -- write raise.
 local RAISE_FLOAT_PARAMS = "serialize: compressed float requires min < max and resolution > 0"
 local RAISE_PRECOMPUTED = "serialize: precomputed compressed float constants must be exactly what CompressedFloatParams derives"
