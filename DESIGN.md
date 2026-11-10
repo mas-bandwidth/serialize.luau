@@ -13,7 +13,7 @@ after its top-level object, the int_relative absolute tier is canonical, and
 wstring is gone. Format 1.1 was this library's first wire; 2.0 keeps every
 byte of every finite value 1.1 could carry.
 
-**The reference implementation.** mas-bandwidth/serialize (C++) v2.1.3 is the
+**The reference implementation.** mas-bandwidth/serialize (C++) v2.1.4 is the
 reference implementation, matched byte for byte, refusal for
 refusal, reason for reason. serialize.js (`ff765a1a89a89dc3f6e818e553baabf189241b4e`)
 is the closest worked example and supplies the spelling. Both are read, never
@@ -21,12 +21,13 @@ imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`, `conformance/*.txt`
 and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.3
+VERBATIM from mas-bandwidth/serialize at tag v2.1.4
 (format 2.0, standard 2.1 with the 2.1.1 rulings, U3, U6, U9 and U15: the
 `rejected` refusal reason and its `reject` vectors) by
-`tools/revendor/revendor.sh v2.1.3`,
-which diffs them against the tag's own copies. CI's corpus job diffs all
-four against the pin on every run. None is edited here; a change arrives by
+`tools/revendor/revendor.sh v2.1.4`,
+which diffs them against the tag's own copies. The pin lives once, as
+`SERIALIZE_REF` in the Makefile; CI's corpus job and the nightly diff all
+four against it. None is edited here; a change arrives by
 re-vendoring from a new tag or commit.
 
 **The pin.** Luau 0.741, the same pin as the companion Luau port (its design

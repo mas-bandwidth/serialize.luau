@@ -1,7 +1,7 @@
 --!strict
 -- serialize_int_relative.luau — int_relative (DESIGN.md (a), (c), (g) and
 -- (h); STANDARD.md int_relative), wire compatible with mas-bandwidth/serialize
--- (C++) v2.1.3 (format version 2.0): the same values produce the same bytes
+-- (C++) v2.1.4 (format version 2.0): the same values produce the same bytes
 -- and the same refusals.
 --
 -- int_relative encodes an increasing sequence compactly: a ladder of one-bit

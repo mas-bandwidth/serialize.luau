@@ -3,7 +3,7 @@
 -- STANDARD.md, Integers: int (ranged) and int64 (ranged)).
 --
 -- The stream dispatches serializeInt and serializeInt64 here; each arm does
--- the whole operation in mas-bandwidth/serialize (C++) v2.1.3's order: misuse
+-- the whole operation in mas-bandwidth/serialize (C++) v2.1.4's order: misuse
 -- first (a min greater than max), then on write and measure a value outside
 -- [min,max] and a write that does not fit the room left trap (IMPLEMENTING.md
 -- U9, U6: write misuse never latches), and on read an offset past the span

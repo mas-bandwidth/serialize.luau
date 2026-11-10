@@ -2,7 +2,7 @@
 -- serialize_bytes.luau — bytes and string (DESIGN.md (g) and (h);
 -- STANDARD.md, Bytes and Strings, Reader Obligations, The vector format).
 --
--- Wire compatible with mas-bandwidth/serialize (C++) v2.1.3: the same values
+-- Wire compatible with mas-bandwidth/serialize (C++) v2.1.4: the same values
 -- produce the same bytes, every refusal STANDARD.md and the reference state is
 -- made, a refusal writes nothing (the whole operation's width is checked
 -- before any bit moves), reads never go past the data's end and hostile bytes
@@ -226,6 +226,11 @@ local RAISE_BYTES_DATA = "serialize: serializeBytes data must be a buffer"
 local RAISE_BYTES_RANGE = "serialize: serializeBytes offset and count must be integers inside the buffer"
 
 local function bytesRange(data: any, offset: any, count: any): (number?, number?, string?)
+	if data == nil and count == 0 and (offset == nil or offset == 0) then
+		-- no destination and a zero count is not misuse on any stream: the
+		-- operation aligns and copies nothing (IMPLEMENTING.md U7)
+		return 0, 0, nil
+	end
 	if type(data) ~= "buffer" then
 		return nil, nil, RAISE_BYTES_DATA
 	end
@@ -258,9 +263,7 @@ function M.writeBytes(s: any, data: any, offset: any, count: any): boolean
 		return s:_misuse(RAISE_ROOM)
 	end
 	writeBitsRaw(s, 0, align)
-	if n > 0 then
-		s:_writeBytes(data, off, n)
-	end
+	s:_writeBytes(data, off, n)
 	return true
 end
 
@@ -336,9 +339,7 @@ function M.writeString(s: any, holder: any, bufferSize: any): boolean
 	end
 	writeLength(s, length, maxLength)
 	writeBitsRaw(s, 0, align)
-	if length > 0 then
-		s:_writeBytes(buffer.fromstring(value), 0, length)
-	end
+	s:_writeBytes(buffer.fromstring(value), 0, length)
 	return true
 end
 

@@ -2,7 +2,7 @@
 #
 # fuzz runs the differential fuzz tests: TestDifferentialAgainstSerializeGo
 # generates 2000 random programs from a fixed seed, writes each with serialize.go
-# v2.0.0 and the Luau port via fuzz/driver.luau, and compares write bytes,
+# (the version fuzz/go.mod pins) and the Luau port via fuzz/driver.luau, and compares write bytes,
 # read-back traces (each ending with the end, every refusal with its reason) and
 # mutated-read decisions. TestDifferentialNegativeControl sets the test-only
 # widenRange flag and asserts the harness catches the planted one-bit-wider int

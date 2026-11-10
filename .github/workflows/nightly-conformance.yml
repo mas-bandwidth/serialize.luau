@@ -11,8 +11,7 @@ name: nightly conformance
 # tools/luaurun reads the upstream corpus through SERIALIZE_CORPUS_DIR. Encodes
 # must match byte for byte, decodes of the C/C++ bytes must match values, and
 # every control must still refuse. Then the vendored copy is diffed against
-# upstream main, and drift is red: a port behind the standard is what this job
-# exists to catch.
+# the released pin (SERIALIZE_REF in the Makefile), and drift is red.
 #
 # workflow_dispatch with negative_control flips one hex digit of one vector in
 # a scratch copy of the upstream corpus, and the job must go red.
@@ -100,10 +99,22 @@ jobs:
       - name: Run the port's negative controls against the upstream lists
         run: make controls
 
-      - name: The vendored corpus matches mas-bandwidth/serialize main (drift is red)
+      # The vendored files are held to the released pin, as ci.yml holds them:
+      # reference main can change a file before any tag carries it, and no
+      # vendored copy could then match both. The pin lives once, as
+      # SERIALIZE_REF in the Makefile.
+      - name: The vendored corpus matches the pinned mas-bandwidth/serialize release
         if: always()
         run: |
-          diff -ru "$RUNNER_TEMP/serialize"/conformance conformance
-          diff -ru "$RUNNER_TEMP/serialize"/conformance-controls conformance-controls
-          diff -u "$RUNNER_TEMP/serialize"/STANDARD.md STANDARD.md
-          diff -u "$RUNNER_TEMP/serialize"/IMPLEMENTING.md IMPLEMENTING.md
+          ref=$(sed -n 's/^SERIALIZE_REF[[:space:]]*:=[[:space:]]*//p' Makefile | head -1)
+          test -n "$ref"
+          pin="$RUNNER_TEMP/serialize-pin"
+          rm -rf "$pin"
+          git init --quiet "$pin"
+          git -C "$pin" fetch --quiet --depth 1 https://github.com/mas-bandwidth/serialize.git "$ref"
+          git -C "$pin" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+          echo "corpus pin: mas-bandwidth/serialize@$ref"
+          diff -ru "$pin"/conformance conformance
+          diff -ru "$pin"/conformance-controls conformance-controls
+          diff -u "$pin"/STANDARD.md STANDARD.md
+          diff -u "$pin"/IMPLEMENTING.md IMPLEMENTING.md

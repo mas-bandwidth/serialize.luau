@@ -1,7 +1,7 @@
 --!strict
 -- serialize_int128.luau — the ranged 128-bit integer (STANDARD.md, int128
 -- (ranged); DESIGN.md (h)), wire compatible with mas-bandwidth/serialize (C++)
--- v2.1.3, and the two-lane Int128/Uint128 helpers that fixed and the type
+-- v2.1.4, and the two-lane Int128/Uint128 helpers that fixed and the type
 -- wire reuse.
 --
 -- Int128 and Uint128 are the same pair { lo, hi } of 64-bit integers, the

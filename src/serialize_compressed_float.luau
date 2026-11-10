@@ -2,7 +2,7 @@
 -- serialize_compressed_float.luau — the compressed_float family (DESIGN.md
 -- (a), (e), (g) and (h); STANDARD.md, Floating Point, "compressed_float"): a
 -- float quantized to a resolution, wire compatible with
--- mas-bandwidth/serialize (C++) v2.1.3.
+-- mas-bandwidth/serialize (C++) v2.1.4.
 --
 -- The wire constants come from CompressedFloatParams (the reference's stream):
 -- delta = max - min, values = delta / res clamped to [1, 4294967040],

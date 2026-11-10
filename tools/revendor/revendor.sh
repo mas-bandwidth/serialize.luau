@@ -4,8 +4,8 @@
 # conformance/ and conformance-controls/ are copied VERBATIM from
 # mas-bandwidth/serialize at <ref> (a tag, or a full 40-digit commit sha), then
 # diffed against the ref's own copy so a divergence is visible before it is
-# committed. Remember to move the pin with it: SERIALIZE_REF in ci.yml and
-# DESIGN.md's pin text (make check-ci ties them).
+# committed. Remember to move the pin with it: SERIALIZE_REF in the Makefile
+# and DESIGN.md's pin text (make check-ci ties them).
 set -eu
 
 ref=${1:?usage: tools/revendor/revendor.sh <tag or full commit sha>}

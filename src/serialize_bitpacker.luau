@@ -1,7 +1,7 @@
 --!strict
 -- serialize_bitpacker.luau — BitWriter and BitReader (DESIGN.md (a), (b),
 -- (g) and (h)), the bitpacking bottom layer of the serialize.luau library,
--- wire compatible with mas-bandwidth/serialize (C++) v2.1.3 (STANDARD.md,
+-- wire compatible with mas-bandwidth/serialize (C++) v2.1.4 (STANDARD.md,
 -- format version 2.0): the same values produce the same bytes.
 --
 -- The writer packs bits least-significant-bit first into a 64-bit scratch

@@ -1,7 +1,7 @@
 --!strict
 -- serialize_stream.luau — the three streams, WriteStream, ReadStream and
 -- MeasureStream (DESIGN.md (a), (g) and (h)), wire compatible with
--- mas-bandwidth/serialize (C++) v2.1.3 (STANDARD.md, format version 2.0).
+-- mas-bandwidth/serialize (C++) v2.1.4 (STANDARD.md, format version 2.0).
 --
 -- This file holds what every stream shares and no family decides: the latch,
 -- terminality, the bit accounting, the fixed-width read and measure gates,
@@ -362,11 +362,9 @@ function WriteStream._writeBits64(self: any, value: integer, bits: number)
 end
 
 -- _writeBytes copies count bytes of src from offset into an ALIGNED stream,
--- already checked against _available (STANDARD.md bytes).
+-- already checked against _available (STANDARD.md bytes). A zero count still
+-- reaches the writer, whose check refuses a write after a flush (U11).
 function WriteStream._writeBytes(self: any, src: buffer, offset: number, count: number)
-	if count == 0 then
-		return
-	end
 	writer(self):writeBytes(src, offset, count)
 	self._bits += count * 8
 end
