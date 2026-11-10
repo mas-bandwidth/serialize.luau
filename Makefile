@@ -1,7 +1,7 @@
 # Makefile — serialize.luau (DESIGN.md, (i) THE RUNNER).
 #
-# Luau 0.741, pinned, the same pin as schema's Luau leg (schema
-# docs/PORT-LUAU.md). To populate dist/ (gitignored), run `make dist-luau`:
+# Luau 0.741, pinned, the same pin as the companion Luau port (its design
+# notes). To populate dist/ (gitignored), run `make dist-luau`:
 #   url:    https://github.com/luau-lang/luau/releases/download/0.741/luau-ubuntu.zip
 #   sha256: 134dc762ad26232af83e43f98dec03ff6030dd3a4452f9408b9d50ccea025503
 #   unzip into dist/luau-0.741/ (luau, luau-analyze, luau-ast, luau-compile)

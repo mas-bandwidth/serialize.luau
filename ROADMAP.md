@@ -10,10 +10,10 @@ Planned work for serialize.luau. Created 2026-10-27, when the port moved to seri
 
 ## Audit findings, 2026-10-27
 
-The cross-port security and correctness audit's findings for this port (AUDIT-LEDGER.md, heading luau). Reproducers are in /Volumes/nova/ai/rowan/working/serialize-love/audit2/serialize.luau/test/audit/ (targeted_test.luau, hostile_test.luau). The four correctness findings landed with the uniform rules; the performance finding is a separate job.
+The cross-port security and correctness audit's findings for this port, under heading luau. Reproducers are in the audit test directory (targeted_test.luau, hostile_test.luau). The four correctness findings landed with the uniform rules; the performance finding is a separate job.
 
 ### perf: the reader is about 3.4x slower than the writer (bit at a time)
 
-A separate performance job, not a correctness fix. Reproducer: targeted_test.luau TestF_ReaderSpeed. Timing runs go only on amd-3 with nothing else running; never trade read-path speed for a check without measuring it. The uniform-rules change added one integer test of the bit count (bits // 1 == bits, and a type check) to serializeBits and serializeBits64 on read: measure it in the same run. Done when: the reader is measured on amd-3 within an agreed ratio of the writer, before and after numbers recorded.
+A separate performance job, not a correctness fix. Reproducer: targeted_test.luau TestF_ReaderSpeed. Timing runs go only on a dedicated bench host with nothing else running; never trade read-path speed for a check without measuring it. The uniform-rules change added one integer test of the bit count (bits // 1 == bits, and a type check) to serializeBits and serializeBits64 on read: measure it in the same run. Done when: the reader is measured on a dedicated bench host within an agreed ratio of the writer, before and after numbers recorded.
 
-From: AUDIT-LEDGER.md, luau, L (perf card)
+From: audit findings, luau, performance card
