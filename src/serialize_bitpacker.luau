@@ -82,7 +82,7 @@ end
 -- in [1,32]; bits of value above that count are ignored. Panics if the write
 -- would go past the end of the buffer (serialize.go WriteBits).
 function BitWriter.writeBits(self: any, value: number, bits: number)
-	if bits < 1 or bits > 32 then
+	if not (bits >= 1 and bits <= 32) or bits // 1 ~= bits then
 		error(RAISE_BITS_RANGE, 2)
 	end
 	if self._scratchBits ~= self._bitsWritten % 64 then
@@ -199,7 +199,7 @@ end
 -- buffer.readbits call reads the whole field (LSB first, the wire's own bit
 -- order), so the cost no longer grows with the width.
 function BitReader.readBits(self: any, bits: number): number
-	if bits < 1 or bits > 32 then
+	if not (bits >= 1 and bits <= 32) or bits // 1 ~= bits then
 		error(RAISE_BITS_RANGE, 2)
 	end
 	if self._bitsRead + bits > self._numBits then

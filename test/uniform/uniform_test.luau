@@ -1,7 +1,7 @@
 --!strict
 -- uniform_test.luau — the uniform rules of IMPLEMENTING.md (U1 to U16,
 -- serialize standard 2.1), one test per rule this port proves, each citing its
--- number, and the 2026-10-27 audit findings (AUDIT-LEDGER.md, luau). The read
+-- number, and the 2026-10-27 audit findings for luau. The read
 -- side never raises: caller misuse on a read stream refuses value_out_of_range
 -- (U7, U16), the failure state checked first. The write and measure side has
 -- one write-misuse mechanism, the trap (U9): a raise naming the rule, which
@@ -29,21 +29,24 @@ end
 -- refuses runs one read on a fresh stream of eight 0xFF bytes and requires a
 -- refusal as value_out_of_range, never a raise, no bits consumed and the holder
 -- unwritten; then the same read on a stream already refused as rejected keeps
--- rejected (U7: the failure state is checked first).
-local function refuses(what: string, read: (any, any) -> any)
+-- rejected (U7: the failure state is checked first). nilHolder omits the
+-- holder.
+local function refuses(what: string, read: (any, any) -> any, nilHolder: boolean?)
 	local data = buffer.create(8)
 	buffer.fill(data, 0, 0xFF)
 	local r = serialize.ReadStream.new(data)
-	local h: any = { value = 99 }
+	local h: any = if nilHolder then nil else { value = 99 }
 	local ok, result = pcall(read, r, h)
 	check(ok, what .. ": raised on read: " .. tostring(result))
 	check(result == false, what .. ": the read was accepted")
 	check(r:error() == OUT, what .. ": refused as " .. tostring(r:error()) .. ", not value_out_of_range")
 	check(r:bitsProcessed() == 0, what .. ": consumed " .. r:bitsProcessed() .. " bits")
-	check(h.value == 99, what .. ": wrote its holder")
+	if not nilHolder then
+		check(h.value == 99, what .. ": wrote its holder")
+	end
 	local again = serialize.ReadStream.new(data)
 	again:reject()
-	local ok2, result2 = pcall(read, again, { value = 99 })
+	local ok2, result2 = pcall(read, again, if nilHolder then nil else { value = 99 })
 	check(ok2 and result2 == false and again:error() == reasons.Rejected, what .. ": a failed stream did not keep its first reason")
 end
 
@@ -156,6 +159,61 @@ function T.TestU7ReadNeverTraps()
 	refuses("object without serialize", function(r, _h)
 		return r:serializeObject({})
 	end)
+	-- a read with no holder refuses value_out_of_range before any bit moves
+	refuses("nil holder bits", function(r, h)
+		return r:serializeBits(h, 8)
+	end, true)
+	refuses("nil holder bits64", function(r, h)
+		return r:serializeBits64(h, 8)
+	end, true)
+	refuses("nil holder bool", function(r, h)
+		return r:serializeBool(h)
+	end, true)
+	refuses("nil holder uint8", function(r, h)
+		return r:serializeUint8(h)
+	end, true)
+	refuses("nil holder uint64", function(r, h)
+		return r:serializeUint64(h)
+	end, true)
+	refuses("nil holder int", function(r, h)
+		return r:serializeInt(h, 0, 255)
+	end, true)
+	refuses("nil holder int64", function(r, h)
+		return r:serializeInt64(h, 0i, 255i)
+	end, true)
+	refuses("nil holder int128", function(r, h)
+		return r:serializeInt128(h, i128(0i, 0i), i128(255i, 0i))
+	end, true)
+	refuses("nil holder uint128", function(r, h)
+		return r:serializeUint128(h)
+	end, true)
+	refuses("nil holder fixed64", function(r, h)
+		return r:serializeFixed64(h, 8, 8, 0i, 1i)
+	end, true)
+	refuses("nil holder fixed128", function(r, h)
+		return r:serializeFixed128(h, 64, 64, 0i, 1i)
+	end, true)
+	refuses("nil holder float", function(r, h)
+		return r:serializeFloat(h)
+	end, true)
+	refuses("nil holder double", function(r, h)
+		return r:serializeDouble(h)
+	end, true)
+	refuses("nil holder compressed float", function(r, h)
+		return r:serializeCompressedFloat(h, 0, 1, 0.1)
+	end, true)
+	refuses("nil holder precomputed float", function(r, h)
+		return r:serializeCompressedFloatPrecomputed(h, 255, 8, 1, 0)
+	end, true)
+	refuses("nil holder int relative", function(r, h)
+		return r:serializeIntRelative(0, h)
+	end, true)
+	refuses("nil holder continue", function(r, h)
+		return serialize.Continue(r, h)
+	end, true)
+	refuses("nil holder until", function(r, h)
+		return serialize.Until(r, h)
+	end, true)
 	-- write and measure keep the raise
 	raises(function()
 		return serialize.WriteStream.new(buffer.create(8)):serializeBits({ value = 0 }, 33)

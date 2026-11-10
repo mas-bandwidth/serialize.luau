@@ -104,11 +104,11 @@ function T.TestSmoke()
 		serialize.WriteStream.new(buffer.create(5))
 	end, "serialize: bit writer buffer size must be a multiple of 8 bytes")
 
-	-- THE LAZY DISPATCH: a family whose file is absent raises its
-	-- not-implemented error by name, on the first call that needs it.
+	-- THE LAZY DISPATCH: a family whose file is absent raises the require
+	-- error naming its module, on the first call that needs it.
 	raises(function()
 		require("./serialize_stream").family("smoke_absent")
-	end, "serialize: smoke_absent not implemented")
+	end, 'could not resolve child component "serialize_smoke_absent"')
 	-- A family name that is not a module name never reaches require.
 	raises(function()
 		require("./serialize_stream").family("../serialize_stream")

@@ -361,12 +361,6 @@ end
 -- readUint128 assigns its holder whatever it held before, an empty {}
 -- included: a read's holder value is an output (audit 2026-10-27).
 local function readUint128(s: any, holder: any): boolean
-	if s:_latched() then
-		return false
-	end
-	if s:_available() < 128 then
-		return s:_fail(PAST_END)
-	end
 	local lo = s:_readBits64(64)
 	local hi = s:_readBits64(64)
 	holder.value = new(lo, hi)
