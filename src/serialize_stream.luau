@@ -68,6 +68,7 @@ end
 -- (DESIGN.md (g)). Family modules raise their own with the same prefix.
 local RAISE_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple of 8 bytes"
 local RAISE_NOT_AN_OBJECT = "serialize: serializeObject requires a table with a serialize method"
+local RAISE_HOLDER = "serialize: a holder must be a table"
 local RAISE_REJECT_NOT_READ = "serialize: reject is read only; a write or measure stream has nothing to refuse"
 local RAISE_ROOM = "serialize: the write does not fit the room left in the buffer"
 local RAISE_LATCH = "serialize: internal: a write or measure stream never latches a reason (IMPLEMENTING.md U9)"
@@ -226,7 +227,10 @@ end
 -- a trap on write and measure, a ValueOutOfRange refusal on read), refuse
 -- on a latched stream (read only: a write or a measure never latches, U9),
 -- then the refusals (read) or the room check (a trap on write), then the bits.
-local DISPATCH: { { string } } = {
+-- The fourth field is the holder's argument position on a read: 1 when the
+-- holder is first (the default), 2 for int_relative (previous first), 0 for
+-- bytes (a buffer, not a holder).
+local DISPATCH: { { any } } = {
 	{ "serializeBits", "bits", "Bits" },
 	{ "serializeBits64", "bits", "Bits64" },
 	{ "serializeInt", "int", "Int" },
@@ -234,10 +238,10 @@ local DISPATCH: { { string } } = {
 	{ "serializeInt128", "int128", "Int128" },
 	{ "serializeFixed64", "fixed", "Fixed64" },
 	{ "serializeFixed128", "fixed", "Fixed128" },
-	{ "serializeIntRelative", "int_relative", "IntRelative" },
+	{ "serializeIntRelative", "int_relative", "IntRelative", 2 },
 	{ "serializeCompressedFloat", "compressed_float", "CompressedFloat" },
 	{ "serializeCompressedFloatPrecomputed", "compressed_float", "CompressedFloatPrecomputed" },
-	{ "serializeBytes", "bytes", "Bytes" },
+	{ "serializeBytes", "bytes", "Bytes", 0 },
 	{ "serializeString", "bytes", "String" },
 }
 
@@ -266,8 +270,15 @@ local function class(kind: string): any
 	end
 	for _, row in DISPATCH do
 		local method, name, arm = row[1], row[2], kind .. row[3]
-		c[method] = function(self: any, ...: any): boolean
-			return family(name)[arm](self, ...)
+		local holder: number = if row[4] == nil then 1 else row[4]
+		c[method] = function(self: any, first: any, ...: any): boolean
+			if kind == "read" and holder ~= 0 then
+				local h = if holder == 2 then (select(1, ...)) else first
+				if type(h) ~= "table" then
+					return self:_misuse(RAISE_HOLDER)
+				end
+			end
+			return family(name)[arm](self, first, ...)
 		end
 	end
 	return c
@@ -428,6 +439,9 @@ for _, row in FIXED do
 	ReadStream[method] = function(self: any, holder: any): boolean
 		if self._error ~= nil then
 			return false
+		end
+		if type(holder) ~= "table" then
+			return self:_misuse(RAISE_HOLDER)
 		end
 		if self._bits + width > self._numBits then
 			return self:_fail(SerializeError.PastEnd)
