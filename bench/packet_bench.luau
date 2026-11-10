@@ -1,7 +1,7 @@
 --!strict
 -- packet_bench.luau: the smallest packet-wire read/write bench. A packet is a
 -- mix of the fields a game packet carries (bool, small and wide bit groups,
--- ranged int, float, aligned bytes); it is written once, then read back N
+-- ranged int, float, compressed float, aligned bytes); it is written once, then read back N
 -- times and written N times, timed apart with os.clock. A micro section times
 -- BitReader.readBits alone at widths 1..32. The packet bytes are hashed and
 -- printed so two builds can be proved to emit identical bytes.
@@ -46,6 +46,8 @@ local function serializePacket(stream: any, seq: number, h: any, payload: buffer
 	if not stream:serializeInt(h, 0, 1000) then return false end
 	h.value = (seq % 256) * 0.5
 	if not stream:serializeFloat(h) then return false end
+	h.value = (seq % 1000) * 0.01
+	if not stream:serializeCompressedFloat(h, 0, 10, 0.01) then return false end
 	h.value = seq % 65536
 	if not stream:serializeUint16(h) then return false end
 	h.value = seq % 32
