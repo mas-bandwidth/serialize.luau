@@ -1,7 +1,7 @@
 --!strict
 -- uniform_test.luau — the uniform rules of IMPLEMENTING.md (U1 to U16,
 -- serialize standard 2.1), one test per rule this port proves, each citing its
--- number, and the 2026-10-27 audit findings (AUDIT-LEDGER.md, luau). The read
+-- number, and the 2026-10-27 audit findings for luau. The read
 -- side never raises: caller misuse on a read stream refuses value_out_of_range
 -- (U7, U16), the failure state checked first. The write and measure side has
 -- one write-misuse mechanism, the trap (U9): a raise naming the rule, which
