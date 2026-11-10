@@ -23,6 +23,12 @@ LUAU         ?= $(LUAU_DIST)/luau
 LUAU_ANALYZE ?= $(LUAU_DIST)/luau-analyze
 export LUAU LUAU_ANALYZE
 
+# The corpus pin, once: STANDARD.md, IMPLEMENTING.md, conformance/ and
+# conformance-controls/ are mas-bandwidth/serialize's at this released tag (or
+# full commit sha) (DESIGN.md, "The vendored standard"). ci.yml and
+# nightly-conformance.yml read it here; make check-ci ties DESIGN.md to it.
+SERIALIZE_REF := v2.1.4
+
 GO ?= go
 LUAURUN := build/luaurun
 ANALYZE_UNIT := build/analyze

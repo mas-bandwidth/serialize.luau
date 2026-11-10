@@ -2,11 +2,11 @@
 # tools/checkci/check-ci.sh -- TEST TestCheckCI (DESIGN.md, (i) THE RUNNER and
 # "The vendored standard").
 #
-# Reads .github/workflows/ci.yml and DESIGN.md only; no network. It fails,
-# naming the line, when ci.yml spells an interpreter URL or sha256 (the pin
-# lives once, in the Makefile), when the workflow does not run `make dist-luau`,
-# `make test` and `make controls`, when a job lacks the fork guard, or when its corpus pin
-# differs from DESIGN.md's pin. Its controls are scratch copies of ci.yml, one
+# Reads .github/workflows/ci.yml, the Makefile and DESIGN.md only; no network.
+# It fails, naming the line, when ci.yml spells an interpreter URL or sha256 or
+# a corpus pin (both pins live once, in the Makefile), when the workflow does
+# not run `make dist-luau`, `make test` and `make controls`, when a job lacks
+# the fork guard, or when the Makefile's corpus pin differs from DESIGN.md's. Its controls are scratch copies of ci.yml, one
 # with a pasted sha256 and one without the fork guard: each must fail its scan,
 # or this test fails.
 set -u
@@ -14,6 +14,7 @@ set -u
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ci="$root/.github/workflows/ci.yml"
 design="$root/DESIGN.md"
+makefile="$root/Makefile"
 tmpbase=${TMPDIR:-${RUNNER_TEMP:-/tmp}}
 
 bad=0
@@ -72,18 +73,20 @@ EOF
 		runs_make "$target" || fail "$ci: ci.yml does not run 'make $target'"
 	done
 
-	ci_line=$(grep -nE '^[[:space:]]*SERIALIZE_REF:' "$ci" | head -1)
-	ci_ref=$(a_ref "$ci_line")
+	pin_line=$(grep -nE '^SERIALIZE_REF[[:space:]]*:=' "$makefile" | head -1)
+	pin_ref=$(a_ref "$pin_line")
 	design_line=$(grep -nE 'VERBATIM from mas-bandwidth/serialize at (tag|commit)' "$design" | head -1)
 	design_ref=$(a_ref "$design_line")
-	case "$ci_ref" in
+	case "$pin_ref" in
 	'')
-		fail "$ci: ci.yml does not name a SERIALIZE_REF corpus pin" ;;
+		fail "$makefile: the Makefile does not name a SERIALIZE_REF corpus pin" ;;
 	*)
-		if [ "$ci_ref" != "$design_ref" ]; then
-			fail "$ci:$ci_line: corpus pin $ci_ref differs from DESIGN.md:$design_line corpus pin ${design_ref:-none}"
+		if [ "$pin_ref" != "$design_ref" ]; then
+			fail "$makefile:$pin_line: corpus pin $pin_ref differs from DESIGN.md:$design_line corpus pin ${design_ref:-none}"
 		fi ;;
 	esac
+	spelled_ref=$(grep -nE '^[[:space:]]*SERIALIZE_REF:' "$ci" | head -1)
+	[ -n "$spelled_ref" ] && fail "$ci:$spelled_ref: the corpus pin is spelled in ci.yml; it belongs only in the Makefile"
 
 	# The control: the same scan over a scratch copy that pastes a sha256 must
 	# fail. A scan that cannot catch that copy proves nothing about ci.yml.
