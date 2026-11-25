@@ -348,4 +348,23 @@ function T.TestLedgerUint64WriteNumber()
 	end, "serialize: serializeBits64 value must be an integer")
 end
 
+-- A write after flush is misuse: the scratch word was written out and the
+-- word index advanced, so the stream is no longer in a writable state.
+function T.TestWriteAfterFlush()
+	for _, n in { 16, 8 } do
+		local w = serialize.WriteStream.new(buffer.create(n))
+		check(w:serializeBits({ value = 0xAB }, 8), "initial write")
+		w:flush()
+		raises(function()
+			return w:serializeBits({ value = 0xCD }, 8)
+		end, "write after flush")
+		local w2 = serialize.WriteStream.new(buffer.create(n))
+		check(w2:serializeBytes(buffer.create(1)), "initial write")
+		w2:flush()
+		raises(function()
+			return w2:serializeBytes(buffer.create(1))
+		end, "write after flush")
+	end
+end
+
 return T

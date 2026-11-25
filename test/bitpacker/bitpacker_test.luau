@@ -354,6 +354,26 @@ local function testMisuse()
 	end, "destination buffer too small")
 end
 
+
+-- A write after flushBits is misuse: the scratch word was written out and the
+-- word index advanced, so the stream is no longer in a writable state.
+local function testWriteAfterFlush()
+	for _, n in { 16, 8 } do
+		local w = BitWriter.new(buffer.create(n))
+		w:writeBits(0xAB, 8)
+		w:flushBits()
+		raises(function()
+			w:writeBits(0xCD, 8)
+		end, "write after flush")
+		local w2 = BitWriter.new(buffer.create(n))
+		w2:writeBits(0xAB, 8)
+		w2:flushBits()
+		raises(function()
+			w2:writeBytes(bytesToBuffer({ 0xCD }))
+		end, "write after flush")
+	end
+end
+
 function T.TestBitpacker()
 	testWriterOracleAndRoundTrip()
 	testMasking()
@@ -362,6 +382,7 @@ function T.TestBitpacker()
 	testReadAlignRefuse()
 	testBytesApis()
 	testMisuse()
+	testWriteAfterFlush()
 end
 
 return T
