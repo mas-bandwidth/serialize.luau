@@ -259,6 +259,12 @@ end
 
 function M.readCompressedFloat(s: any, h: any, min: number, max: number, resolution: number): boolean
 	local bad = paramsMisuse(min, max, resolution)
+	if bad == nil then
+		local delta = fround(fround(max) - fround(min))
+		if not isFinite(delta) or not isFinite(fround(delta / fround(resolution))) then
+			bad = RAISE_DECLARATION
+		end
+	end
 	if bad ~= nil then
 		return s:_misuse(bad)
 	end
